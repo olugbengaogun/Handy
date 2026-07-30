@@ -71,7 +71,7 @@ export const AboutSettings: React.FC = () => {
           <Button
             variant="secondary"
             size="md"
-            onClick={() => openUrl("https://github.com/cjpais/Handy")}
+            onClick={() => openUrl("https://github.com/olugbengaogun/Handy")}
           >
             {t("settings.about.sourceCode.button")}
           </Button>
@@ -82,6 +82,24 @@ export const AboutSettings: React.FC = () => {
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.about.acknowledgments.title")}>
+        <SettingContainer
+          title={t("settings.about.acknowledgments.handy.title")}
+          description={t("settings.about.acknowledgments.handy.description")}
+          grouped={true}
+          layout="stacked"
+        >
+          <div className="text-sm text-mid-gray space-y-2">
+            <div>{t("settings.about.acknowledgments.handy.details")}</div>
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => openUrl("https://github.com/cjpais/Handy")}
+            >
+              {t("settings.about.acknowledgments.handy.button")}
+            </Button>
+          </div>
+        </SettingContainer>
+
         <SettingContainer
           title={t("settings.about.acknowledgments.ggml.title")}
           description={t("settings.about.acknowledgments.ggml.description")}
