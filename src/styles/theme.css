@@ -40,7 +40,14 @@
   --dark-shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.35);
 
   /* Tokens that do not change between light and dark */
-  --color-background-ui: #da5893;
+  /* Darkened ~14% from the original #da5893 brand pink: white button text on
+     the original measured 3.62:1 (WCAG AA needs 4.5:1 for body text).
+     #bb4c7e verified at 4.72:1 - comfortable margin, not hugging the
+     minimum, smallest change that clears the bar with headroom. Affects
+     Button's primary variant (where this mattered), plus ToggleSwitch's
+     "on" state and Slider's fill (both purely decorative, no text sits on
+     either, so no functional reason they needed to stay unchanged). */
+  --color-background-ui: #bb4c7e;
   --color-text-stroke: #f6f6f6;
   --color-mid-gray: #808080;
 
