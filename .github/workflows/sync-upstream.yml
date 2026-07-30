@@ -1,0 +1,119 @@
+name: "Sync upstream (cjpais/Handy)"
+
+# Keeps this fork's main branch up to date with the original Handy project
+# with as little human involvement as possible, without ever silently
+# clobbering this fork's customizations (rebrand, instant-mute fix,
+# audio-free history, personal dictionary, usage insights, etc.):
+#
+#   - No new upstream commits           -> do nothing.
+#   - Merges cleanly AND tests pass     -> push straight to main. Zero clicks.
+#   - Merge conflict OR tests fail      -> push a branch and open a PR instead
+#                                          of touching main, so a human looks
+#                                          at exactly what collided.
+#
+# This intentionally does NOT use a generic "sync fork" action — those reset/
+# fast-forward a branch to match upstream, which would destroy the commits
+# that make this fork worth having in the first place.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily, 06:00 UTC — matches CJ's near-daily commit pace
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git identity
+        run: |
+          git config user.name "handy-plus-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Fetch upstream and attempt merge
+        id: merge
+        run: |
+          git remote add upstream https://github.com/cjpais/Handy.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "No new upstream commits."
+            echo "status=nothing_to_do" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git merge upstream/main --no-edit; then
+            echo "Merged cleanly, running tests before pushing."
+            echo "status=merged" >> "$GITHUB_OUTPUT"
+          else
+            echo "Merge conflict — leaving conflict markers for review."
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install system dependencies
+        if: steps.merge.outputs.status == 'merged'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libasound2-dev libssl-dev libgtk-layer-shell-dev \
+            libvulkan-dev glslc spirv-headers
+
+      - name: Rust cache
+        if: steps.merge.outputs.status == 'merged'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Setup Bun
+        if: steps.merge.outputs.status == 'merged'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Run test suite on the merged result
+        if: steps.merge.outputs.status == 'merged'
+        id: test
+        run: |
+          bun install
+          if (cd src-tauri && cargo test); then
+            echo "pass=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pass=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push clean, green merge straight to main
+        if: steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'true'
+        run: git push origin HEAD:main
+
+      - name: Push a branch and open a PR for review
+        if: steps.merge.outputs.status == 'conflict' || (steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'false')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REASON="merge conflict"
+          if [ "${{ steps.merge.outputs.status }}" == "merged" ]; then
+            REASON="tests failed after merging cleanly"
+            # git merge --no-edit already auto-committed the merge itself on
+            # success; there is nothing new to stage here. Committing again
+            # would fail ("nothing to commit") and abort this step before the
+            # PR is ever opened.
+          else
+            # A conflicted merge leaves markers unstaged with no commit yet —
+            # stage and commit them so the PR shows exactly what collided.
+            git add -A
+            git commit -m "chore: upstream sync (has conflicts, needs review)"
+          fi
+
+          BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "Upstream sync needs a look ($REASON)" \
+            --body "Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`." \
+            --base main --head "$BRANCH"
