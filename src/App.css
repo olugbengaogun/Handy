@@ -13,6 +13,21 @@
   --color-mid-gray: var(--color-mid-gray);
   --color-warning: var(--color-warning);
   --color-error: var(--color-error);
+  --color-surface: var(--color-surface);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+}
+
+/* Redesign tokens: radius + easing are static (identical light/dark), so
+   they're plain @theme overrides rather than the inline-from-runtime-var
+   pattern above. Measured, restrained values — macOS System Settings'
+   grouped-box radius, not iOS card sizing. Every existing rounded-md/
+   rounded-lg/rounded-xl usage across the app picks these up automatically. */
+@theme {
+  --radius-md: 0.5rem; /* 8px, was 6px */
+  --radius-lg: 0.625rem; /* 10px, was 8px */
+  --radius-xl: 0.875rem; /* 14px, was 12px */
+  --ease-apple: cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 :root {
@@ -75,6 +90,9 @@
   --color-logo-stroke: var(--light-color-logo-stroke);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
+  --shadow-sm: var(--light-shadow-sm);
+  --shadow-md: var(--light-shadow-md);
+  --color-surface: var(--color-background);
 }
 
 :root[data-theme="dark"] {
@@ -84,6 +102,9 @@
   --color-logo-stroke: var(--dark-color-logo-stroke);
   --color-warning: var(--dark-color-warning);
   --color-error: var(--dark-color-error);
+  --shadow-sm: var(--dark-shadow-sm);
+  --shadow-md: var(--dark-shadow-md);
+  --color-surface: color-mix(in srgb, var(--color-background) 94%, white 6%);
 }
 
 /* macOS - tint native overlay scrollbar thumb */

@@ -22,6 +22,19 @@
   --dark-color-warning: #fbbf24;
   --dark-color-error: #f87171;
 
+  /* Elevated-surface shadows. NOT a mirrored light/dark pair by design: a
+     dark drop shadow reads as invisible-to-muddy on an already-dark
+     background, so dark mode gets its own tuned opacity rather than reusing
+     light's. Verified: light-mode surface color has no usable luminance
+     headroom for a separate color token (color-mix toward white is
+     byte-identical to the base at any usable %), so depth in light mode
+     comes from these shadows + the existing hairline border, not a color
+     shift. Dark mode's `--color-surface` below IS a real, verified lift. */
+  --light-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --light-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --dark-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --dark-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+
   /* Tokens that do not change between light and dark */
   --color-background-ui: #da5893;
   --color-text-stroke: #f6f6f6;
@@ -35,6 +48,11 @@
   --color-logo-stroke: var(--light-color-logo-stroke);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
+  --shadow-sm: var(--light-shadow-sm);
+  --shadow-md: var(--light-shadow-md);
+  /* Elevated card surface. Light mode: identical to the window background
+     (see comment above) — depth comes from border+shadow, not color. */
+  --color-surface: var(--color-background);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -45,5 +63,10 @@
     --color-logo-stroke: var(--dark-color-logo-stroke);
     --color-warning: var(--dark-color-warning);
     --color-error: var(--dark-color-error);
+    --shadow-sm: var(--dark-shadow-sm);
+    --shadow-md: var(--dark-shadow-md);
+    /* Verified: 11.32:1 text contrast, a real-but-subtle lift off the dark
+       background (color-mix computed to #393836 against a #2c2b29 base). */
+    --color-surface: color-mix(in srgb, var(--color-background) 94%, white 6%);
   }
 }
