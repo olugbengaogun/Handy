@@ -1,7 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
-import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  Pencil,
+  RotateCcw,
+  Star,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -11,9 +20,47 @@ import {
   type HistoryUpdatePayload,
 } from "@/bindings";
 import { useOsType } from "@/hooks/useOsType";
+import { useSettings } from "@/hooks/useSettings";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { Textarea } from "../../ui/Textarea";
+
+// Detects a clean single-word substitution between two whitespace-tokenized
+// strings (same word count, exactly one differing position). Used to decide
+// whether an edit is specific enough to suggest as a dictionary correction —
+// broader rewrites are just saved without a suggestion.
+function findSingleWordCorrection(
+  original: string,
+  edited: string,
+): { wrong: string; correct: string } | null {
+  const originalWords = original.trim().split(/\s+/).filter(Boolean);
+  const editedWords = edited.trim().split(/\s+/).filter(Boolean);
+  if (
+    originalWords.length !== editedWords.length ||
+    originalWords.length === 0
+  ) {
+    return null;
+  }
+  let diffIndex = -1;
+  for (let i = 0; i < originalWords.length; i++) {
+    if (originalWords[i] !== editedWords[i]) {
+      if (diffIndex !== -1) {
+        return null; // more than one differing word
+      }
+      diffIndex = i;
+    }
+  }
+  if (diffIndex === -1) {
+    return null; // no change
+  }
+  const wrong = originalWords[diffIndex].replace(/[.,!?;:]+$/, "");
+  const correct = editedWords[diffIndex].replace(/[.,!?;:]+$/, "");
+  if (!wrong || !correct || wrong === correct) {
+    return null;
+  }
+  return { wrong, correct };
+}
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -223,6 +270,13 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  const updateHistoryEntryText = async (id: number, text: string) => {
+    const result = await commands.updateHistoryTranscription(id, text);
+    if (result.status !== "ok") {
+      throw new Error(String(result.error));
+    }
+  };
+
   const openRecordingsFolder = async () => {
     try {
       const result = await commands.openRecordingsFolder();
@@ -262,6 +316,7 @@ export const HistorySettings: React.FC = () => {
                 getAudioUrl={getAudioUrl}
                 deleteAudio={deleteAudioEntry}
                 retryTranscription={retryHistoryEntry}
+                updateTranscription={updateHistoryEntryText}
               />
             ))}
           </div>
@@ -301,6 +356,7 @@ interface HistoryEntryProps {
   getAudioUrl: (fileName: string) => Promise<string | null>;
   deleteAudio: (id: number) => Promise<void>;
   retryTranscription: (id: number) => Promise<void>;
+  updateTranscription: (id: number, text: string) => Promise<void>;
 }
 
 const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
@@ -310,10 +366,15 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   getAudioUrl,
   deleteAudio,
   retryTranscription,
+  updateTranscription,
 }) => {
   const { t, i18n } = useTranslation();
+  const { getSetting, updateSetting } = useSettings();
   const [showCopied, setShowCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedText, setEditedText] = useState(entry.transcription_text);
+  const [saving, setSaving] = useState(false);
 
   const hasTranscription = entry.transcription_text.trim().length > 0;
 
@@ -353,6 +414,62 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
     }
   };
 
+  const handleStartEditing = () => {
+    setEditedText(entry.transcription_text);
+    setIsEditing(true);
+  };
+
+  const handleCancelEditing = () => {
+    setIsEditing(false);
+    setEditedText(entry.transcription_text);
+  };
+
+  const offerDictionaryTeach = (wrong: string, correct: string) => {
+    const correctionPairs = getSetting("correction_pairs") || [];
+    if (
+      correctionPairs.some(
+        (pair) => pair.wrong.toLowerCase() === wrong.toLowerCase(),
+      )
+    ) {
+      return; // already taught
+    }
+    toast(t("settings.history.teachPrompt", { wrong, correct }), {
+      action: {
+        label: t("settings.history.teachConfirm"),
+        onClick: () => {
+          // Re-read at click time rather than reusing the toast-creation-time
+          // snapshot above — two teach prompts actioned back to back would
+          // otherwise race, with the second overwriting the first's addition.
+          const current = getSetting("correction_pairs") || [];
+          updateSetting("correction_pairs", [...current, { wrong, correct }]);
+        },
+      },
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    const trimmed = editedText.trim();
+    const originalText = entry.transcription_text;
+    if (trimmed === originalText.trim()) {
+      setIsEditing(false);
+      return;
+    }
+    try {
+      setSaving(true);
+      await updateTranscription(entry.id, trimmed);
+      setIsEditing(false);
+      const correction = findSingleWordCorrection(originalText, trimmed);
+      if (correction) {
+        offerDictionaryTeach(correction.wrong, correction.correct);
+      }
+    } catch (error) {
+      console.error("Failed to update transcription:", error);
+      toast.error(t("settings.history.editError"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
 
   return (
@@ -387,21 +504,32 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
               fill={entry.saved ? "currentColor" : "none"}
             />
           </IconButton>
-          <IconButton
-            onClick={handleRetranscribe}
-            disabled={retrying}
-            title={t("settings.history.retranscribe")}
-          >
-            <RotateCcw
-              width={16}
-              height={16}
-              style={
-                retrying
-                  ? { animation: "spin 1s linear infinite reverse" }
-                  : undefined
-              }
-            />
-          </IconButton>
+          {entry.has_audio && (
+            <IconButton
+              onClick={handleRetranscribe}
+              disabled={retrying || isEditing}
+              title={t("settings.history.retranscribe")}
+            >
+              <RotateCcw
+                width={16}
+                height={16}
+                style={
+                  retrying
+                    ? { animation: "spin 1s linear infinite reverse" }
+                    : undefined
+                }
+              />
+            </IconButton>
+          )}
+          {hasTranscription && !isEditing && (
+            <IconButton
+              onClick={handleStartEditing}
+              disabled={retrying}
+              title={t("settings.history.edit")}
+            >
+              <Pencil width={16} height={16} />
+            </IconButton>
+          )}
           <IconButton
             onClick={handleDeleteEntry}
             disabled={retrying}
@@ -412,36 +540,74 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
         </div>
       </div>
 
-      <p
-        className={`italic text-sm pb-2 ${
-          retrying
-            ? ""
-            : hasTranscription
-              ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
-              : "text-text/40"
-        }`}
-        style={
-          retrying
-            ? { animation: "transcribe-pulse 3s ease-in-out infinite" }
-            : undefined
-        }
-      >
-        {retrying && (
-          <style>{`
+      {isEditing ? (
+        <div className="flex flex-col gap-2">
+          <Textarea
+            value={editedText}
+            onChange={(e) => setEditedText(e.target.value)}
+            className="w-full text-sm"
+            autoFocus
+            disabled={saving}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCancelEditing}
+              disabled={saving}
+            >
+              <X width={14} height={14} />
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleSaveEdit}
+              disabled={saving || !editedText.trim()}
+            >
+              <Check width={14} height={14} />
+              {t("common.save")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p
+          className={`italic text-sm pb-2 ${
+            retrying
+              ? ""
+              : hasTranscription
+                ? "text-text/90 select-text cursor-text whitespace-pre-wrap break-words"
+                : "text-text/40"
+          }`}
+          style={
+            retrying
+              ? { animation: "transcribe-pulse 3s ease-in-out infinite" }
+              : undefined
+          }
+        >
+          {retrying && (
+            <style>{`
             @keyframes transcribe-pulse {
               0%, 100% { color: color-mix(in srgb, var(--color-text) 40%, transparent); }
               50% { color: color-mix(in srgb, var(--color-text) 90%, transparent); }
             }
           `}</style>
-        )}
-        {retrying
-          ? t("settings.history.transcribing")
-          : hasTranscription
-            ? entry.transcription_text
-            : t("settings.history.transcriptionFailed")}
-      </p>
+          )}
+          {retrying
+            ? t("settings.history.transcribing")
+            : hasTranscription
+              ? entry.transcription_text
+              : t("settings.history.transcriptionFailed")}
+        </p>
+      )}
 
-      <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      {entry.has_audio ? (
+        <AudioPlayer onLoadRequest={handleLoadAudio} className="w-full" />
+      ) : (
+        <p className="text-xs text-text/40 italic">
+          {t("settings.history.audioNotSaved")}
+        </p>
+      )}
     </div>
   );
 };

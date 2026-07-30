@@ -93,6 +93,15 @@ pub struct LLMPrompt {
     pub prompt: String,
 }
 
+/// A personal-dictionary correction: text the user was mis-transcribed as
+/// (`wrong`) mapped to what it should have been (`correct`). Fed into the same
+/// fuzzy custom-word matching pipeline as `custom_words`.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct CorrectionPair {
+    pub wrong: String,
+    pub correct: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -401,6 +410,10 @@ pub struct AppSettings {
     pub history_limit: usize,
     #[serde(default = "default_recording_retention_period")]
     pub recording_retention_period: RecordingRetentionPeriod,
+    #[serde(default = "default_keep_audio_recordings")]
+    pub keep_audio_recordings: bool,
+    #[serde(default)]
+    pub correction_pairs: Vec<CorrectionPair>,
     #[serde(default)]
     pub paste_method: PasteMethod,
     #[serde(default)]
@@ -497,7 +510,7 @@ fn default_autostart_enabled() -> bool {
 }
 
 fn default_update_checks_enabled() -> bool {
-    false
+    true
 }
 
 fn default_show_whats_new_on_update() -> bool {
@@ -561,6 +574,10 @@ fn default_history_limit() -> usize {
 
 fn default_recording_retention_period() -> RecordingRetentionPeriod {
     RecordingRetentionPeriod::PreserveLimit
+}
+
+fn default_keep_audio_recordings() -> bool {
+    true
 }
 
 fn default_audio_feedback_volume() -> f32 {
@@ -864,6 +881,8 @@ pub fn get_default_settings() -> AppSettings {
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
         recording_retention_period: default_recording_retention_period(),
+        keep_audio_recordings: default_keep_audio_recordings(),
+        correction_pairs: Vec::new(),
         paste_method: PasteMethod::default(),
         clipboard_handling: ClipboardHandling::default(),
         auto_submit: default_auto_submit(),
@@ -904,6 +923,19 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// `custom_words` plus the "correct" side of every `correction_pairs`
+    /// entry, merged for feeding into the fuzzy custom-word matcher and the
+    /// Whisper initial prompt — both treat "known-good words to listen for"
+    /// the same way regardless of whether they came from the plain word list
+    /// or from a correction the user taught.
+    pub fn effective_custom_words(&self) -> Vec<String> {
+        self.custom_words
+            .iter()
+            .cloned()
+            .chain(self.correction_pairs.iter().map(|p| p.correct.clone()))
+            .collect()
+    }
+
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
         self.post_process_providers
             .iter()

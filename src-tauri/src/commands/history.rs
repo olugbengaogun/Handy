@@ -1,6 +1,6 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
-    history::{HistoryManager, PaginatedHistory},
+    history::{HistoryManager, PaginatedHistory, StatsRange, UsageStats},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
@@ -72,6 +72,10 @@ pub async fn retry_history_entry_transcription(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
+
+    if !entry.has_audio {
+        return Err("Audio for this entry was not kept, so it can't be re-transcribed".to_string());
+    }
 
     let audio_path = history_manager.get_audio_file_path(&entry.file_name);
     let samples = crate::audio_toolkit::read_wav_samples(&audio_path)
@@ -151,4 +155,57 @@ pub async fn update_recording_retention_period(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn update_keep_audio_recordings(
+    app: AppHandle,
+    keep: bool,
+) -> Result<(), String> {
+    let mut settings = crate::settings::get_settings(&app);
+    settings.keep_audio_recordings = keep;
+    crate::settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_usage_stats(
+    _app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    range: StatsRange,
+) -> Result<UsageStats, String> {
+    history_manager
+        .get_usage_stats(range)
+        .map_err(|e| e.to_string())
+}
+
+/// Lets the user manually correct a saved transcript (e.g. fixing a misheard
+/// name), independent of retry/re-transcription. Reuses the existing
+/// `HistoryManager::update_transcription`, previously only called internally
+/// by retry.
+#[tauri::command]
+#[specta::specta]
+pub async fn update_history_transcription(
+    _app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    id: i64,
+    text: String,
+) -> Result<(), String> {
+    let entry = history_manager
+        .get_entry_by_id(id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("History entry {} not found", id))?;
+
+    history_manager
+        .update_transcription(
+            id,
+            text,
+            entry.post_processed_text,
+            entry.post_process_prompt,
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }

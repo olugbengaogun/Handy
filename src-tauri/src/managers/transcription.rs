@@ -1236,11 +1236,12 @@ impl TranscriptionManager {
                         // whisper run extension to a non-whisper arch is rejected
                         // with INVALID_ARG, so skip it there and let the fuzzy
                         // post-correction handle custom words instead.
-                        let family = if settings.custom_words.is_empty() || !model_is_whisper {
+                        let effective_custom_words = settings.effective_custom_words();
+                        let family = if effective_custom_words.is_empty() || !model_is_whisper {
                             None
                         } else {
                             Some(RunExtension::Whisper(WhisperRunOptions {
-                                initial_prompt: Some(settings.custom_words.join(", ")),
+                                initial_prompt: Some(effective_custom_words.join(", ")),
                                 ..Default::default()
                             }))
                         };
@@ -1611,10 +1612,11 @@ fn post_process_transcription_text(
     custom_words_already_prompted: bool,
 ) -> String {
     fail_open_text_transform(raw, |raw| {
-        let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
+        let effective_custom_words = settings.effective_custom_words();
+        let corrected = if !effective_custom_words.is_empty() && !custom_words_already_prompted {
             apply_custom_words(
                 &raw,
-                &settings.custom_words,
+                &effective_custom_words,
                 settings.word_correction_threshold,
             )
         } else {

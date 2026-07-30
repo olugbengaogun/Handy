@@ -31,12 +31,31 @@ static MIGRATIONS: &[M] = &[
     M::up("ALTER TABLE transcription_history ADD COLUMN post_processed_text TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_prompt TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN post_process_requested BOOLEAN NOT NULL DEFAULT 0;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN has_audio BOOLEAN NOT NULL DEFAULT 1;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN word_count INTEGER NOT NULL DEFAULT 0;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN duration_secs REAL NOT NULL DEFAULT 0;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct PaginatedHistory {
     pub entries: Vec<HistoryEntry>,
     pub has_more: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum StatsRange {
+    Week,
+    Month,
+    AllTime,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct UsageStats {
+    pub total_words: i64,
+    pub total_entries: i64,
+    pub total_duration_secs: f64,
+    pub average_wpm: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
@@ -63,6 +82,9 @@ pub struct HistoryEntry {
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
     pub post_process_requested: bool,
+    pub has_audio: bool,
+    pub word_count: i64,
+    pub duration_secs: f64,
 }
 
 pub struct HistoryManager {
@@ -207,6 +229,9 @@ impl HistoryManager {
             post_processed_text: row.get("post_processed_text")?,
             post_process_prompt: row.get("post_process_prompt")?,
             post_process_requested: row.get("post_process_requested")?,
+            has_audio: row.get("has_audio")?,
+            word_count: row.get("word_count")?,
+            duration_secs: row.get("duration_secs")?,
         })
     }
 
@@ -215,7 +240,9 @@ impl HistoryManager {
     }
 
     /// Save a new history entry to the database.
-    /// The WAV file should already have been written to the recordings directory.
+    /// The WAV file should already have been written to the recordings directory
+    /// (unless `has_audio` is false, meaning the caller intentionally isn't
+    /// keeping it and has already deleted or will delete the WAV).
     pub fn save_entry(
         &self,
         file_name: String,
@@ -223,9 +250,12 @@ impl HistoryManager {
         post_process_requested: bool,
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
+        has_audio: bool,
+        duration_secs: f64,
     ) -> Result<HistoryEntry> {
         let timestamp = Utc::now().timestamp();
         let title = self.format_timestamp_title(timestamp);
+        let word_count = transcription_text.split_whitespace().count() as i64;
 
         let conn = self.get_connection()?;
         conn.execute(
@@ -237,8 +267,11 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                post_process_requested,
+                has_audio,
+                word_count,
+                duration_secs
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 &file_name,
                 timestamp,
@@ -248,6 +281,9 @@ impl HistoryManager {
                 &post_processed_text,
                 &post_process_prompt,
                 post_process_requested,
+                has_audio,
+                word_count,
+                duration_secs,
             ],
         )?;
 
@@ -261,6 +297,9 @@ impl HistoryManager {
             post_processed_text,
             post_process_prompt,
             post_process_requested,
+            has_audio,
+            word_count,
+            duration_secs,
         };
 
         debug!("Saved history entry with id {}", entry.id);
@@ -287,17 +326,24 @@ impl HistoryManager {
         post_processed_text: Option<String>,
         post_process_prompt: Option<String>,
     ) -> Result<HistoryEntry> {
+        // word_count must be recomputed here (used by retry AND manual edits) —
+        // otherwise usage stats keep summing the word count from the original
+        // save, silently drifting from the text actually stored.
+        let word_count = transcription_text.split_whitespace().count() as i64;
+
         let conn = self.get_connection()?;
         let updated = conn.execute(
             "UPDATE transcription_history
              SET transcription_text = ?1,
                  post_processed_text = ?2,
-                 post_process_prompt = ?3
-             WHERE id = ?4",
+                 post_process_prompt = ?3,
+                 word_count = ?4
+             WHERE id = ?5",
             params![
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
+                word_count,
                 id
             ],
         )?;
@@ -308,7 +354,7 @@ impl HistoryManager {
 
         let entry = conn
             .query_row(
-                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
                  FROM transcription_history WHERE id = ?1",
                 params![id],
                 Self::map_history_entry,
@@ -459,7 +505,7 @@ impl HistoryManager {
             (Some(cursor_id), Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
                      FROM transcription_history
                      WHERE id < ?1
                      ORDER BY id DESC
@@ -473,7 +519,7 @@ impl HistoryManager {
             (None, Some(lim)) => {
                 let fetch_count = (lim + 1) as i64;
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
                      FROM transcription_history
                      ORDER BY id DESC
                      LIMIT ?1",
@@ -485,7 +531,7 @@ impl HistoryManager {
             }
             (_, None) => {
                 let mut stmt = conn.prepare(
-                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
                      FROM transcription_history
                      ORDER BY id DESC",
                 )?;
@@ -516,7 +562,10 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                has_audio,
+                word_count,
+                duration_secs
              FROM transcription_history
              ORDER BY timestamp DESC
              LIMIT 1",
@@ -524,6 +573,40 @@ impl HistoryManager {
 
         let entry = stmt.query_row([], Self::map_history_entry).optional()?;
         Ok(entry)
+    }
+
+    /// Aggregate word/duration/entry-count stats over a time range, computed
+    /// in SQL rather than by paginating the full table client-side.
+    pub fn get_usage_stats(&self, range: StatsRange) -> Result<UsageStats> {
+        let conn = self.get_connection()?;
+        let now = Utc::now().timestamp();
+        let cutoff = match range {
+            StatsRange::Week => Some(now - 7 * 24 * 60 * 60),
+            StatsRange::Month => Some(now - 30 * 24 * 60 * 60),
+            StatsRange::AllTime => None,
+        };
+
+        let query = "SELECT COALESCE(SUM(word_count), 0), COUNT(*), COALESCE(SUM(duration_secs), 0.0)
+             FROM transcription_history
+             WHERE transcription_text != '' AND (?1 IS NULL OR timestamp >= ?1)";
+
+        let (total_words, total_entries, total_duration_secs): (i64, i64, f64) = conn
+            .query_row(query, params![cutoff], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?;
+
+        let average_wpm = if total_duration_secs > 0.0 {
+            total_words as f64 / (total_duration_secs / 60.0)
+        } else {
+            0.0
+        };
+
+        Ok(UsageStats {
+            total_words,
+            total_entries,
+            total_duration_secs,
+            average_wpm,
+        })
     }
 
     /// Get the latest entry with non-empty transcription text.
@@ -543,7 +626,10 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                has_audio,
+                word_count,
+                duration_secs
              FROM transcription_history
              WHERE transcription_text != ''
              ORDER BY timestamp DESC
@@ -597,7 +683,10 @@ impl HistoryManager {
                 transcription_text,
                 post_processed_text,
                 post_process_prompt,
-                post_process_requested
+                post_process_requested,
+                has_audio,
+                word_count,
+                duration_secs
              FROM transcription_history
              WHERE id = ?1",
         )?;
@@ -666,7 +755,10 @@ mod tests {
                 transcription_text TEXT NOT NULL,
                 post_processed_text TEXT,
                 post_process_prompt TEXT,
-                post_process_requested BOOLEAN NOT NULL DEFAULT 0
+                post_process_requested BOOLEAN NOT NULL DEFAULT 0,
+                has_audio BOOLEAN NOT NULL DEFAULT 1,
+                word_count INTEGER NOT NULL DEFAULT 0,
+                duration_secs REAL NOT NULL DEFAULT 0
             );",
         )
         .expect("create transcription_history table");

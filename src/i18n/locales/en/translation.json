@@ -15,6 +15,7 @@
     "advanced": "Advanced",
     "postProcessing": "Post Process",
     "history": "History",
+    "insights": "Insights",
     "debug": "Debug",
     "about": "About"
   },
@@ -368,6 +369,19 @@
       "voiceActivityDetection": {
         "title": "Voice Activity Detection",
         "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
+      },
+      "keepAudioRecordings": {
+        "label": "Keep Audio Recordings",
+        "description": "Save the audio for each dictation alongside its text. Turn off to keep searchable transcript history without storing audio files, saving disk space."
+      },
+      "correctionPairs": {
+        "title": "Personal Dictionary",
+        "description": "Teach spelling corrections for names and terms that keep getting mis-transcribed. Add pairs directly here, or edit a transcript in History and confirm the suggested correction.",
+        "wrongPlaceholder": "Heard as",
+        "correctPlaceholder": "Correct spelling",
+        "add": "Add",
+        "remove": "Remove {{word}}",
+        "duplicate": "\"{{word}}\" already has a correction"
       }
     },
     "postProcessing": {
@@ -437,7 +451,25 @@
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
       "transcribing": "Transcribing...",
-      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
+      "audioNotSaved": "Audio not saved for this entry",
+      "edit": "Edit transcript",
+      "editError": "Failed to save your edit. Please try again.",
+      "teachPrompt": "Teach Handy Plus that \"{{wrong}}\" should be \"{{correct}}\"?",
+      "teachConfirm": "Teach it"
+    },
+    "insights": {
+      "title": "Usage Insights",
+      "loading": "Loading...",
+      "empty": "No dictation yet for this period.",
+      "totalWords": "Total Words",
+      "averageWpm": "Average WPM",
+      "totalRecordings": "Recordings",
+      "range": {
+        "week": "This Week",
+        "month": "This Month",
+        "allTime": "All Time"
+      }
     },
     "debug": {
       "title": "Debug",
@@ -614,6 +646,8 @@
     "open": "Open",
     "copy": "Copy",
     "clear": "Clear",
+    "cancel": "Cancel",
+    "save": "Save",
     "noOptionsFound": "No options found"
   },
   "accessibility": {
