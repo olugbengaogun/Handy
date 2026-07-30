@@ -261,7 +261,7 @@ export const ModelsSettings: React.FC = () => {
                   onClick={() => rescanLocalModels()}
                   disabled={isRescanning}
                   title={t("settings.models.rescan.tooltip")}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20 transition-colors ease-apple disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <RefreshCw
                     className={`w-3.5 h-3.5 ${isRescanning ? "animate-spin" : ""}`}
@@ -275,7 +275,7 @@ export const ModelsSettings: React.FC = () => {
                     onClick={() =>
                       setLanguageDropdownOpen(!languageDropdownOpen)
                     }
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ease-apple ${
                       languageFilter !== "all"
                         ? "bg-logo-primary/20 text-logo-primary"
                         : "bg-mid-gray/10 text-text/60 hover:bg-mid-gray/20"
@@ -293,7 +293,7 @@ export const ModelsSettings: React.FC = () => {
                   </button>
 
                   {languageDropdownOpen && (
-                    <div className="absolute top-full right-0 mt-1 w-56 bg-background border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
+                    <div className="absolute top-full right-0 mt-1 w-56 bg-surface border border-mid-gray/80 rounded-lg shadow-lg z-50 overflow-hidden">
                       <div className="p-2 border-b border-mid-gray/40">
                         <input
                           ref={languageSearchInputRef}
@@ -327,7 +327,7 @@ export const ModelsSettings: React.FC = () => {
                             setLanguageDropdownOpen(false);
                             setLanguageSearch("");
                           }}
-                          className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
+                          className={`w-full px-3 py-1.5 text-sm text-left transition-colors ease-apple ${
                             languageFilter === "all"
                               ? "bg-logo-primary/20 text-logo-primary font-semibold"
                               : "hover:bg-mid-gray/10"
@@ -344,7 +344,7 @@ export const ModelsSettings: React.FC = () => {
                               setLanguageDropdownOpen(false);
                               setLanguageSearch("");
                             }}
-                            className={`w-full px-3 py-1.5 text-sm text-left transition-colors ${
+                            className={`w-full px-3 py-1.5 text-sm text-left transition-colors ease-apple ${
                               languageFilter === lang.value
                                 ? "bg-logo-primary/20 text-logo-primary font-semibold"
                                 : "hover:bg-mid-gray/10"

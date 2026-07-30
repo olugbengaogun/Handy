@@ -107,3 +107,20 @@ Small, surgical, per-file diffs — replace raw `<button className="...">` with 
 - The `@theme` override mechanism already empirically proven against this exact project's build (see above), not assumed.
 - No Rust changes in this plan, so no `cargo check`/`cargo test` gate is required — run anyway before committing as a safety net, matching this session's established practice.
 - Commit each phase separately so the redesign is easy to review/bisect if something doesn't land right on the user's own machine (still the only place this can actually be *seen*, since this sandbox has no display).
+- Confirmed the shared `theme.css` (imported by both the main app and the recording-overlay bundle) leaks zero active styling into the overlay — only inert, unreferenced custom-property declarations. Checked the compiled overlay CSS directly for the new utility classes; found none. The overlay's rendered appearance is unaffected, as intended.
+
+## Second-opinion consult (Fable, ~24k tokens)
+Validated the core direction — specifically called out the asymmetric light/dark elevation logic as "the detail most AI redesigns get backwards," and the restrained single-easing-token choice as correct for a utility app. Two watchouts raised and resolved:
+1. **Primary button contrast** — white text on the pink accent button measures 3.62:1, below the 4.5:1 AA threshold for body text. Verified this is **pre-existing** (unrelated to any token this redesign touched — the accent color and white text were never modified here). Flagged to the user rather than silently changed, since altering the brand accent's shade is a brand decision, not a bug fix within this plan's scope.
+2. **`--radius-xl` (14px) risk of looking oversized on small controls** — checked usage directly: it's applied in exactly one place (`ModelCard.tsx`, a full onboarding card), never a small control. Non-issue.
+
+## Phase C — files actually touched (bounded pass, no forced rewrites)
+Applied the token-consistency touch (retune existing `transition-*` to the new easing; `bg-background` → `bg-surface` on floating/elevated panels) rather than swapping to the `Button` component, since none of these had a layout simple enough for a clean 1:1 swap without restructuring: `ModelsSettings.tsx`, `LanguageSelector.tsx`, `ModelDropdown.tsx`, `UpdateChecker.tsx` (including its hand-rolled portable-update modal, which also gained `shadow-xl` to match `Dialog.tsx`'s treatment), `Onboarding.tsx`, `AccessibilityOnboarding.tsx`, `ModelStatusButton.tsx`.
+
+Deliberately left untouched: `AccessibilityPermissions.tsx`, `KeyboardDiagnostic.tsx`, `SecureInputWarning.tsx` — none of their buttons have an existing `transition` to retune, and adding one where none existed would be introducing new behavior, not restyling existing behavior.
+
+## Phase D — done
+Added `text-text/60` to `SettingContainer`'s inline (non-tooltip) description paragraphs, for a clearer primary/secondary label hierarchy matching Apple HIG convention. `SettingsGroup`'s section description already used `text-mid-gray` (already appropriately secondary) — left alone.
+
+## Status: complete
+All four phases implemented, verified (`lint`, `build`, `cargo check`, `cargo test` — 147/147), and committed. Everything in "Explicitly out of scope" above remains untouched.

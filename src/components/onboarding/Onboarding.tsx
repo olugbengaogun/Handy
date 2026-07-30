@@ -219,7 +219,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
                 <button
                   type="button"
                   onClick={() => setShowAll((v) => !v)}
-                  className="flex items-center justify-center gap-1.5 mx-auto py-1 text-sm font-medium text-text/60 hover:text-text transition-colors"
+                  className="flex items-center justify-center gap-1.5 mx-auto py-1 text-sm font-medium text-text/60 hover:text-text transition-colors ease-apple"
                 >
                   {showAll
                     ? t("onboarding.showFewerModels")
