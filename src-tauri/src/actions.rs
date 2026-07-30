@@ -157,6 +157,24 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
         return None;
     }
 
+    // Fold the user's personal dictionary corrections into the prompt as a
+    // glossary, so post-processing models get the same spelling hints the
+    // fuzzy matcher and Whisper initial prompt already use.
+    let prompt = if settings.correction_pairs.is_empty() {
+        prompt
+    } else {
+        let glossary = settings
+            .correction_pairs
+            .iter()
+            .map(|pair| format!("{} -> {}", pair.wrong, pair.correct))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{}\n\nKnown terms (the user has taught these spelling corrections; apply them when the transcript contains something close to the left side):\n{}",
+            prompt, glossary
+        )
+    };
+
     debug!(
         "Starting LLM post-processing with provider '{}' (model: {})",
         provider.id, model
@@ -469,6 +487,12 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
+        // Mute immediately, before anything else. Muting must not wait on model
+        // load, mic device open, or the start chime finishing — any of those can
+        // take seconds, and none of them should gate how fast background audio
+        // stops. If recording fails to start, remove_mute() below restores audio.
+        rm.apply_mute();
+
         // Load ASR model and VAD model in parallel
         let kickoff_started = Instant::now();
         tm.initiate_model_load();
@@ -535,15 +559,12 @@ impl ShortcutAction for TranscribeAction {
 
         let mut recording_error: Option<String> = None;
         if is_always_on {
-            // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
+            // Always-on mode: mute already applied above; just play the start chime.
             debug!("Always-on mode: Playing audio feedback immediately");
-            let rm_clone = Arc::clone(&rm);
             let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled,
-            // so we can always reuse this thread to ensure mute happens right after playback.
+            // The blocking helper exits immediately if audio feedback is disabled.
             std::thread::spawn(move || {
                 play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                rm_clone.apply_mute();
             });
 
             if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
@@ -551,8 +572,8 @@ impl ShortcutAction for TranscribeAction {
                 recording_error = Some(e);
             }
         } else {
-            // On-demand mode: Start recording first, then play audio feedback, then apply mute
-            // This allows the microphone to be activated before playing the sound
+            // On-demand mode: mute already applied above; start recording, then
+            // play the start chime after a short delay to let the mic stream settle.
             debug!("On-demand mode: Starting recording first, then audio feedback");
             let recording_start_time = Instant::now();
             match rm.try_start_recording(&binding_id, vad_policy) {
@@ -560,14 +581,11 @@ impl ShortcutAction for TranscribeAction {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
                     // Small delay to ensure microphone stream is active
                     let app_clone = app.clone();
-                    let rm_clone = Arc::clone(&rm);
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback/mute sequence");
-                        // Helper handles disabled audio feedback by returning early, so we reuse it
-                        // to keep mute sequencing consistent in every mode.
+                        debug!("Handling delayed audio feedback");
+                        // Helper handles disabled audio feedback by returning early.
                         play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                        rm_clone.apply_mute();
                     });
                 }
                 Err(e) => {
@@ -582,7 +600,17 @@ impl ShortcutAction for TranscribeAction {
             shortcut::register_cancel_shortcut(app);
         } else {
             // Starting failed (for example due to blocked microphone permissions).
-            // Revert UI state so we don't stay stuck in the recording overlay.
+            // Revert UI state so we don't stay stuck in the recording overlay, and
+            // restore audio since we muted unconditionally above but never recorded.
+            //
+            // Exception: "Already recording" means a DIFFERENT, still-active
+            // recording owns the current mute (e.g. this call came from a second
+            // shortcut binding or the --toggle-transcription CLI flag while a
+            // hotkey-triggered recording is in progress) — unmuting here would
+            // wrongly restore audio out from under that still-running recording.
+            if recording_error.as_deref() != Some("Already recording") {
+                rm.remove_mute();
+            }
             tm.cancel_stream();
             utils::hide_recording_overlay(app);
             change_tray_icon(app, TrayIconState::Idle);
@@ -728,12 +756,42 @@ impl ShortcutAction for TranscribeAction {
                         }
                     };
 
+                    // A cancelled recording never reaches save_entry, so the WAV
+                    // written above would otherwise be orphaned on disk forever
+                    // (no history entry ever points to it). Delete it wherever
+                    // the operation bails out early below.
+                    let cleanup_orphaned_wav = || {
+                        if wav_saved {
+                            if let Err(e) = std::fs::remove_file(&wav_path_for_verify) {
+                                error!(
+                                    "Failed to delete orphaned WAV file after cancellation: {}",
+                                    e
+                                );
+                            }
+                        }
+                    };
+
                     if rm.was_cancelled_since(cancel_generation) {
                         debug!("Transcription operation cancelled before output handling");
+                        cleanup_orphaned_wav();
                         utils::hide_recording_overlay(&ah);
                         change_tray_icon(&ah, TrayIconState::Idle);
                         return;
                     }
+
+                    // Read once, used by both the success and failure history-save paths below.
+                    let keep_audio_recordings = get_settings(&ah).keep_audio_recordings;
+                    let duration_secs = sample_count as f64 / 16_000.0;
+                    let discard_audio_if_unwanted = || {
+                        if !keep_audio_recordings {
+                            if let Err(e) = std::fs::remove_file(&wav_path_for_verify) {
+                                error!(
+                                    "Failed to delete WAV file after saving text-only history entry: {}",
+                                    e
+                                );
+                            }
+                        }
+                    };
 
                     match transcription_result {
                         Ok(transcription) => {
@@ -757,6 +815,7 @@ impl ShortcutAction for TranscribeAction {
                             .await
                             else {
                                 debug!("Transcription operation cancelled during output handling");
+                                cleanup_orphaned_wav();
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                                 return;
@@ -764,6 +823,7 @@ impl ShortcutAction for TranscribeAction {
 
                             if rm.was_cancelled_since(cancel_generation) {
                                 debug!("Transcription operation cancelled before paste");
+                                cleanup_orphaned_wav();
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                                 return;
@@ -771,14 +831,17 @@ impl ShortcutAction for TranscribeAction {
 
                             // Save to history if WAV was saved
                             if wav_saved {
-                                if let Err(err) = hm.save_entry(
+                                match hm.save_entry(
                                     file_name,
                                     transcription,
                                     post_process,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
+                                    keep_audio_recordings,
+                                    duration_secs,
                                 ) {
-                                    error!("Failed to save history entry: {}", err);
+                                    Ok(_) => discard_audio_if_unwanted(),
+                                    Err(err) => error!("Failed to save history entry: {}", err),
                                 }
                             }
 
@@ -823,6 +886,7 @@ impl ShortcutAction for TranscribeAction {
                                 debug!(
                                     "Transcription operation cancelled after transcription error"
                                 );
+                                cleanup_orphaned_wav();
                                 utils::hide_recording_overlay(&ah);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                                 return;
@@ -832,7 +896,10 @@ impl ShortcutAction for TranscribeAction {
                             // Surface the failure to the UI (toast). The full
                             // message is also in handy.log via the line above.
                             let _ = ah.emit("transcription-error", err.to_string());
-                            // Save entry with empty text so user can retry
+                            // Save entry with empty text so user can retry. Audio is always
+                            // kept here regardless of keep_audio_recordings — there's no
+                            // transcript yet, so the audio is the only thing making this
+                            // entry useful (retry needs it).
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
                                     file_name,
@@ -840,6 +907,8 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     None,
                                     None,
+                                    true,
+                                    duration_secs,
                                 ) {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }

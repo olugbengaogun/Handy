@@ -455,7 +455,9 @@ impl AudioRecordingManager {
 
     /* ---------- microphone life-cycle -------------------------------------- */
 
-    /// Applies mute if mute_while_recording is enabled and stream is open.
+    /// Applies mute if mute_while_recording is enabled. Intentionally does not
+    /// wait for the mic stream to be open — called as the very first step on
+    /// keypress so muting isn't stuck behind device-open/model-load latency.
     /// Snapshots the system's prior mute state first so `remove_mute` can
     /// restore it instead of unconditionally unmuting.
     pub fn apply_mute(&self) {
@@ -464,8 +466,6 @@ impl AudioRecordingManager {
             return;
         }
 
-        // Lock order: is_open before mute_state (matches stop_microphone_stream).
-        let is_open = self.is_open.lock().unwrap();
         let mut mute_guard = self.mute_state.lock().unwrap();
         // Already muted this session — don't re-snapshot, or a duplicate/late
         // apply would overwrite prev_muted with our own forced-muted state and
@@ -473,12 +473,10 @@ impl AudioRecordingManager {
         if mute_guard.did_mute {
             return;
         }
-        if *is_open {
-            mute_guard.prev_muted = get_mute();
-            set_mute(true);
-            mute_guard.did_mute = true;
-            debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
-        }
+        mute_guard.prev_muted = get_mute();
+        set_mute(true);
+        mute_guard.did_mute = true;
+        debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
     }
 
     /// Removes mute if it was applied, restoring the system's prior mute state
