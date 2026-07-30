@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
+import { useOsType } from "../../hooks/useOsType";
 import type { OverlayPosition, OverlayStyle } from "@/bindings";
 
 interface ShowOverlayProps {
@@ -14,6 +15,14 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
+    const osType = useOsType();
+    // Matches the Rust default (settings.rs default_overlay_style): Linux
+    // hides the overlay by default, every other platform shows it live.
+    // Used only while settings are still loading (getSetting returns
+    // undefined then) - guessing the wrong platform's default would flash
+    // an incorrect selection before real settings arrive.
+    const defaultOverlayStyle: OverlayStyle =
+      osType === "linux" ? "none" : "live";
 
     const styleOptions = [
       {
@@ -42,7 +51,7 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
     ];
 
     const selectedStyle = (getSetting("overlay_style") ||
-      "live") as OverlayStyle;
+      defaultOverlayStyle) as OverlayStyle;
     // Only "top" and "bottom" are selectable; anything else (empty, or a legacy
     // "none" from before the position was retired) falls back to "bottom".
     const selectedPosition: OverlayPosition =

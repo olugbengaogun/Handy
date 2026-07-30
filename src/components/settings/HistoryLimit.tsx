@@ -17,7 +17,8 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
   const { getSetting, updateSetting, isUpdating } = useSettings();
 
   const historyLimit = getSetting("history_limit") ?? 5;
-  const isUnlimited = (getSetting("recording_retention_period") ?? "never") === "never";
+  const isUnlimited =
+    (getSetting("recording_retention_period") ?? "preserve_limit") === "never";
   const busy =
     isUpdating("history_limit") || isUpdating("recording_retention_period");
 

@@ -38,7 +38,8 @@ function App() {
   const [isReturningUser, setIsReturningUser] = useState(false);
   const [currentSection, setCurrentSection] =
     useState<SidebarSection>("general");
-  const { settings, updateSetting } = useSettings();
+  const { settings, updateSetting, isLoading: settingsLoading } =
+    useSettings();
   const direction = getLanguageDirection(i18n.language);
   const refreshAudioDevices = useSettingsStore(
     (state) => state.refreshAudioDevices,
@@ -287,6 +288,29 @@ function App() {
     );
   } else if (onboardingStep === "model") {
     content = <Onboarding onModelSelected={handleModelSelected} />;
+  } else if (settingsLoading) {
+    // checkOnboardingStatus() fetches settings independently of the shared
+    // settings store useSettings() reads from - reaching "done" here does
+    // NOT guarantee that store has finished loading. Rendering settings
+    // screens before it has would let every getSetting() call return
+    // undefined, silently falling back to whatever default value each
+    // component happens to hardcode (several of which don't match the
+    // real, sometimes platform-dependent, Rust default). Waiting here is
+    // the single shared fix, instead of patching every settings component.
+    //
+    // Gated on isLoading, not `!settings`: isLoading is guaranteed to
+    // resolve to false even if the settings fetch itself fails (see
+    // settingsStore.ts refreshSettings, which sets isLoading: false in
+    // every branch including errors) - settings can stay null forever on a
+    // genuine failure. Gating on `!settings` instead would turn a rare
+    // backend hiccup into a permanent blank spinner; gating on isLoading
+    // preserves today's existing behavior (degraded but usable, via each
+    // component's own fallback) as the safety net for that edge case.
+    content = (
+      <div className="h-screen flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-logo-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
   } else {
     content = (
       <div
