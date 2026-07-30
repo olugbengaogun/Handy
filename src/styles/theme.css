@@ -32,8 +32,12 @@
      shift. Dark mode's `--color-surface` below IS a real, verified lift. */
   --light-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --light-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --light-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --light-shadow-xl: 0 12px 36px rgba(0, 0, 0, 0.14), 0 4px 10px rgba(0, 0, 0, 0.08);
   --dark-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --dark-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --dark-shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --dark-shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.35);
 
   /* Tokens that do not change between light and dark */
   --color-background-ui: #da5893;
@@ -50,6 +54,8 @@
   --color-error: var(--light-color-error);
   --shadow-sm: var(--light-shadow-sm);
   --shadow-md: var(--light-shadow-md);
+  --shadow-lg: var(--light-shadow-lg);
+  --shadow-xl: var(--light-shadow-xl);
   /* Elevated card surface. Light mode: identical to the window background
      (see comment above) — depth comes from border+shadow, not color. */
   --color-surface: var(--color-background);
@@ -65,6 +71,8 @@
     --color-error: var(--dark-color-error);
     --shadow-sm: var(--dark-shadow-sm);
     --shadow-md: var(--dark-shadow-md);
+    --shadow-lg: var(--dark-shadow-lg);
+    --shadow-xl: var(--dark-shadow-xl);
     /* Verified: 11.32:1 text contrast, a real-but-subtle lift off the dark
        background (color-mix computed to #393836 against a #2c2b29 base). */
     --color-surface: color-mix(in srgb, var(--color-background) 94%, white 6%);

@@ -52,13 +52,13 @@ const selectStyles: StylesConfig<SelectOption, false> = {
   control: (base, state) => ({
     ...base,
     minHeight: 40,
-    borderRadius: 6,
+    borderRadius: "var(--radius-md)",
     borderColor: state.isFocused ? "var(--color-logo-primary)" : neutralBorder,
     boxShadow: state.isFocused ? "0 0 0 1px var(--color-logo-primary)" : "none",
     backgroundColor: state.isFocused ? focusBackground : baseBackground,
     fontSize: "0.875rem",
     color: "var(--color-text)",
-    transition: "all 150ms ease",
+    transition: "all 150ms var(--ease-apple)",
     ":hover": {
       borderColor: "var(--color-logo-primary)",
       backgroundColor: hoverBackground,
@@ -96,11 +96,12 @@ const selectStyles: StylesConfig<SelectOption, false> = {
   menu: (provided) => ({
     ...provided,
     zIndex: 30,
-    backgroundColor: "var(--color-background)",
+    borderRadius: "var(--radius-md)",
+    backgroundColor: "var(--color-surface)",
     color: "var(--color-text)",
     border:
       "1px solid color-mix(in srgb, var(--color-mid-gray) 30%, transparent)",
-    boxShadow: "0 10px 30px rgba(15, 15, 15, 0.2)",
+    boxShadow: "var(--shadow-lg)",
   }),
   option: (base, state) => ({
     ...base,

@@ -16,6 +16,8 @@
   --color-surface: var(--color-surface);
   --shadow-sm: var(--shadow-sm);
   --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
 }
 
 /* Redesign tokens: radius + easing are static (identical light/dark), so
@@ -92,6 +94,8 @@
   --color-error: var(--light-color-error);
   --shadow-sm: var(--light-shadow-sm);
   --shadow-md: var(--light-shadow-md);
+  --shadow-lg: var(--light-shadow-lg);
+  --shadow-xl: var(--light-shadow-xl);
   --color-surface: var(--color-background);
 }
 
@@ -104,6 +108,8 @@
   --color-error: var(--dark-color-error);
   --shadow-sm: var(--dark-shadow-sm);
   --shadow-md: var(--dark-shadow-md);
+  --shadow-lg: var(--dark-shadow-lg);
+  --shadow-xl: var(--dark-shadow-xl);
   --color-surface: color-mix(in srgb, var(--color-background) 94%, white 6%);
 }
 
