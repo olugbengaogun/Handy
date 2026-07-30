@@ -571,24 +571,18 @@
         "title": "App Data Directory",
         "description": "Location where Handy Plus stores its data"
       },
+      "website": {
+        "title": "Website",
+        "description": "Visit the Handy Plus website",
+        "button": "Visit Website"
+      },
       "sourceCode": {
         "title": "Source Code",
         "description": "View source code and contribute",
         "button": "View on GitHub"
       },
-      "supportDevelopment": {
-        "title": "Support Development",
-        "description": "Help support the original Handy project this is built on",
-        "button": "Donate"
-      },
       "acknowledgments": {
         "title": "Acknowledgments",
-        "handy": {
-          "title": "Handy",
-          "description": "The open source speech-to-text app this project is forked from",
-          "details": "Handy Plus is a fork of Handy by cjpais and contributors. All credit for the original design and engineering goes to them.",
-          "button": "View Original Project"
-        },
         "ggml": {
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
