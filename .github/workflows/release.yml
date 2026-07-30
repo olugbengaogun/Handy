@@ -73,7 +73,12 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      # No Apple Developer / Azure Trusted Signing certs for this fork (both
+      # are paid). Auto-updates still work fine without OS code-signing —
+      # that's a separate, free mechanism (see build.yml). Flip to true if
+      # you ever set up paid certs; first-run installs will just show an
+      # "unidentified developer" prompt until then (one-time, per machine).
+      sign-binaries: false
       asset-prefix: "handy"
       upload-artifacts: false
       release-id: ${{ needs.create-release.outputs.release-id }}
