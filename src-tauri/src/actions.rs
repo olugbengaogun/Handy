@@ -557,15 +557,29 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
+        // apply_mute() above already silenced the output device the start
+        // chime would play through (when mute_while_recording is on). Playing
+        // it anyway would be inaudible at best; at worst it'd tempt a future
+        // change to unmute-play-remute, which reopens mid-recording the exact
+        // background-audio-bleed window apply_mute() exists to close. So skip
+        // it outright in that case - the recording overlay is the start
+        // feedback instead. (The stop chime is unaffected: remove_mute() runs
+        // before it, since recording has already ended by then.)
+        let skip_start_chime = settings.mute_while_recording;
+
         let mut recording_error: Option<String> = None;
         if is_always_on {
             // Always-on mode: mute already applied above; just play the start chime.
-            debug!("Always-on mode: Playing audio feedback immediately");
-            let app_clone = app.clone();
-            // The blocking helper exits immediately if audio feedback is disabled.
-            std::thread::spawn(move || {
-                play_feedback_sound_blocking(&app_clone, SoundType::Start);
-            });
+            if skip_start_chime {
+                debug!("Skipping start chime: mute_while_recording muted its output device");
+            } else {
+                debug!("Always-on mode: Playing audio feedback immediately");
+                let app_clone = app.clone();
+                // The blocking helper exits immediately if audio feedback is disabled.
+                std::thread::spawn(move || {
+                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                });
+            }
 
             if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
                 debug!("Recording failed: {}", e);
@@ -579,14 +593,18 @@ impl ShortcutAction for TranscribeAction {
             match rm.try_start_recording(&binding_id, vad_policy) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    // Small delay to ensure microphone stream is active
-                    let app_clone = app.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        debug!("Handling delayed audio feedback");
-                        // Helper handles disabled audio feedback by returning early.
-                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                    });
+                    if skip_start_chime {
+                        debug!("Skipping start chime: mute_while_recording muted its output device");
+                    } else {
+                        // Small delay to ensure microphone stream is active
+                        let app_clone = app.clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            debug!("Handling delayed audio feedback");
+                            // Helper handles disabled audio feedback by returning early.
+                            play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                        });
+                    }
                 }
                 Err(e) => {
                     debug!("Failed to start recording: {}", e);
