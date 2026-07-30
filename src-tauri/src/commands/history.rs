@@ -22,6 +22,21 @@ pub async fn get_history_entries(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn search_history_entries(
+    _app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    query: String,
+    cursor: Option<i64>,
+    limit: Option<usize>,
+) -> Result<PaginatedHistory, String> {
+    history_manager
+        .search_history_entries(&query, cursor, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn toggle_history_entry_saved(
     _app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,

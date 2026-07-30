@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Pencil,
   RotateCcw,
+  Search,
   Star,
   Trash2,
   X,
@@ -24,7 +25,10 @@ import { useSettings } from "@/hooks/useSettings";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { Input } from "../../ui/Input";
 import { Textarea } from "../../ui/Textarea";
+
+const SEARCH_DEBOUNCE_MS = 300;
 
 // Detects a clean single-word substitution between two whitespace-tokenized
 // strings (same word count, exactly one differing position). Used to decide
@@ -112,14 +116,29 @@ export const HistorySettings: React.FC = () => {
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
+  const [searchInput, setSearchInput] = useState("");
+  const [activeSearch, setActiveSearch] = useState("");
   const sentinelRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef<HistoryEntry[]>([]);
   const loadingRef = useRef(false);
+  const activeSearchRef = useRef("");
 
   // Keep ref in sync for use in IntersectionObserver callback
   useEffect(() => {
     entriesRef.current = entries;
   }, [entries]);
+
+  // Debounce search input so we're not querying on every keystroke
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setActiveSearch(searchInput.trim());
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
+
+  useEffect(() => {
+    activeSearchRef.current = activeSearch;
+  }, [activeSearch]);
 
   const loadPage = useCallback(async (cursor?: number) => {
     const isFirstPage = cursor === undefined;
@@ -129,10 +148,10 @@ export const HistorySettings: React.FC = () => {
     if (isFirstPage) setLoading(true);
 
     try {
-      const result = await commands.getHistoryEntries(
-        cursor ?? null,
-        PAGE_SIZE,
-      );
+      const query = activeSearchRef.current;
+      const result = query
+        ? await commands.searchHistoryEntries(query, cursor ?? null, PAGE_SIZE)
+        : await commands.getHistoryEntries(cursor ?? null, PAGE_SIZE);
       if (result.status === "ok") {
         const { entries: newEntries, has_more } = result.data;
         setEntries((prev) =>
@@ -148,10 +167,11 @@ export const HistorySettings: React.FC = () => {
     }
   }, []);
 
-  // Initial load
+  // Load the first page on mount, and reload from scratch whenever the
+  // active (debounced) search term changes.
   useEffect(() => {
     loadPage();
-  }, [loadPage]);
+  }, [activeSearch, loadPage]);
 
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
@@ -182,7 +202,11 @@ export const HistorySettings: React.FC = () => {
     const unlisten = events.historyUpdatePayload.listen((event) => {
       const payload: HistoryUpdatePayload = event.payload;
       if (payload.action === "added") {
-        setEntries((prev) => [payload.entry, ...prev]);
+        // Skip while a search is active — the new entry may not match the
+        // current query, and re-querying to check isn't worth it here.
+        if (!activeSearchRef.current) {
+          setEntries((prev) => [payload.entry, ...prev]);
+        }
       } else if (payload.action === "updated") {
         setEntries((prev) =>
           prev.map((e) => (e.id === payload.entry.id ? payload.entry : e)),
@@ -299,7 +323,9 @@ export const HistorySettings: React.FC = () => {
   } else if (entries.length === 0) {
     content = (
       <div className="px-4 py-3 text-center text-text/60">
-        {t("settings.history.empty")}
+        {activeSearch
+          ? t("settings.history.noSearchResults", { query: activeSearch })
+          : t("settings.history.empty")}
       </div>
     );
   } else {
@@ -340,6 +366,29 @@ export const HistorySettings: React.FC = () => {
             onClick={openRecordingsFolder}
             label={t("settings.history.openFolder")}
           />
+        </div>
+        <div className="px-4 relative">
+          <Search
+            className="absolute left-7 top-1/2 -translate-y-1/2 text-text/40 pointer-events-none"
+            width={14}
+            height={14}
+          />
+          <Input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={t("settings.history.searchPlaceholder")}
+            className="w-full pl-8"
+          />
+          {searchInput && (
+            <button
+              onClick={() => setSearchInput("")}
+              className="absolute right-7 top-1/2 -translate-y-1/2 text-text/40 hover:text-text/70 cursor-pointer"
+              title={t("common.clear")}
+            >
+              <X width={14} height={14} />
+            </button>
+          )}
         </div>
         <div className="bg-background border border-mid-gray/20 rounded-lg overflow-visible">
           {content}

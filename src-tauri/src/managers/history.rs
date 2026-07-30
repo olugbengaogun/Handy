@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error, info};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{named_params, params, Connection, OptionalExtension};
 use rusqlite_migration::{Migrations, M};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -537,6 +537,93 @@ impl HistoryManager {
                 )?;
                 let result = stmt
                     .query_map([], Self::map_history_entry)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                result
+            }
+        };
+
+        let has_more = limit.is_some_and(|lim| entries.len() > lim);
+        if has_more {
+            entries.pop();
+        }
+
+        Ok(PaginatedHistory { entries, has_more })
+    }
+
+    /// Same cursor-based pagination as `get_history_entries`, filtered to
+    /// entries whose raw or post-processed text contains `query`
+    /// (case-insensitive for ASCII, matching SQLite's default LIKE).
+    pub async fn search_history_entries(
+        &self,
+        query: &str,
+        cursor: Option<i64>,
+        limit: Option<usize>,
+    ) -> Result<PaginatedHistory> {
+        let conn = self.get_connection()?;
+        let limit = limit.map(|l| l.min(100));
+        // Escape LIKE's special characters so a literal search for e.g. "50%"
+        // or "file_name" isn't misinterpreted as a wildcard pattern.
+        let pattern = format!(
+            "%{}%",
+            query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+        );
+        const MATCH_CLAUSE: &str =
+            "(transcription_text LIKE :pattern ESCAPE '\\' OR post_processed_text LIKE :pattern ESCAPE '\\')";
+
+        let mut entries: Vec<HistoryEntry> = match (cursor, limit) {
+            (Some(cursor_id), Some(lim)) => {
+                let fetch_count = (lim + 1) as i64;
+                let sql = format!(
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
+                     FROM transcription_history
+                     WHERE id < :cursor AND {MATCH_CLAUSE}
+                     ORDER BY id DESC
+                     LIMIT :fetch_count"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let result = stmt
+                    .query_map(
+                        named_params! {
+                            ":cursor": cursor_id,
+                            ":pattern": pattern,
+                            ":fetch_count": fetch_count,
+                        },
+                        Self::map_history_entry,
+                    )?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                result
+            }
+            (None, Some(lim)) => {
+                let fetch_count = (lim + 1) as i64;
+                let sql = format!(
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
+                     FROM transcription_history
+                     WHERE {MATCH_CLAUSE}
+                     ORDER BY id DESC
+                     LIMIT :fetch_count"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let result = stmt
+                    .query_map(
+                        named_params! {
+                            ":pattern": pattern,
+                            ":fetch_count": fetch_count,
+                        },
+                        Self::map_history_entry,
+                    )?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                result
+            }
+            (_, None) => {
+                let sql = format!(
+                    "SELECT id, file_name, timestamp, saved, title, transcription_text, post_processed_text, post_process_prompt, post_process_requested, has_audio, word_count, duration_secs
+                     FROM transcription_history
+                     WHERE {MATCH_CLAUSE}
+                     ORDER BY id DESC"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                let result = stmt
+                    .query_map(named_params! { ":pattern": pattern }, Self::map_history_entry)?
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 result
             }

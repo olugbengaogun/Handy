@@ -816,6 +816,14 @@ async getHistoryEntries(cursor: number | null, limit: number | null) : Promise<R
     else return { status: "error", error: e  as any };
 }
 },
+async searchHistoryEntries(query: string, cursor: number | null, limit: number | null) : Promise<Result<PaginatedHistory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("search_history_entries", { query, cursor, limit }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_usage_stats", { range }) };

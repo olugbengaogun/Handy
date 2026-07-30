@@ -443,6 +443,8 @@
       "openFolder": "Open Recordings Folder",
       "loading": "Loading history...",
       "empty": "No transcriptions yet. Start recording to build your history!",
+      "searchPlaceholder": "Search transcripts...",
+      "noSearchResults": "No transcripts match \"{{query}}\"",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
       "unsave": "Remove from saved",
@@ -514,7 +516,8 @@
       "historyLimit": {
         "title": "History Limit",
         "description": "Maximum number of history entries to keep",
-        "entries": "entries"
+        "entries": "entries",
+        "unlimited": "Unlimited"
       },
       "recordingRetention": {
         "title": "Auto-Delete Recordings",

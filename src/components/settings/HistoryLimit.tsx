@@ -17,12 +17,22 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
   const { getSetting, updateSetting, isUpdating } = useSettings();
 
   const historyLimit = getSetting("history_limit") ?? 5;
+  const isUnlimited = (getSetting("recording_retention_period") ?? "never") === "never";
+  const busy =
+    isUpdating("history_limit") || isUpdating("recording_retention_period");
 
   const handleChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const value = parseInt(event.target.value, 10);
     if (!isNaN(value) && value >= 0) {
       updateSetting("history_limit", value);
     }
+  };
+
+  const handleUnlimitedChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    updateSetting(
+      "recording_retention_period",
+      event.target.checked ? "never" : "preserve_limit",
+    );
   };
 
   return (
@@ -33,19 +43,29 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
       grouped={grouped}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-3">
         <Input
           type="number"
           min="0"
           max="1000"
           value={historyLimit}
           onChange={handleChange}
-          disabled={isUpdating("history_limit")}
+          disabled={busy || isUnlimited}
           className="w-20"
         />
         <span className="text-sm text-text">
           {t("settings.debug.historyLimit.entries")}
         </span>
+        <label className="flex items-center gap-1.5 text-sm text-text cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isUnlimited}
+            onChange={handleUnlimitedChange}
+            disabled={busy}
+            className="cursor-pointer"
+          />
+          {t("settings.debug.historyLimit.unlimited")}
+        </label>
       </div>
     </SettingContainer>
   );
