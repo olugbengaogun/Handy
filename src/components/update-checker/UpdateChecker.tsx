@@ -8,6 +8,17 @@ import { ProgressBar } from "../shared";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "../../bindings";
 
+// How long to wait between automatic background update checks. Handy Plus
+// usually runs for days without a restart, and the launch-time check used to
+// be the only automatic one - so a release could ship and go unnoticed until
+// the user happened to restart or check by hand.
+const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+// Timers do not advance while the machine is asleep, so a single long timer
+// would drift by however long the lid was shut. Tick often and compare
+// wall-clock time instead, which self-corrects after a sleep/wake cycle.
+const AUTO_CHECK_TICK_MS = 5 * 60 * 1000; // 5 minutes
+
 interface UpdateCheckerProps {
   className?: string;
 }
@@ -31,6 +42,8 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const isManualCheckRef = useRef(false);
   const downloadedBytesRef = useRef(0);
   const contentLengthRef = useRef(0);
+  const lastCheckAtRef = useRef(0);
+  const autoCheckRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     // Wait for settings to load before doing anything
@@ -61,9 +74,21 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
     };
   }, [settingsLoaded, updateChecksEnabled]);
 
+  useEffect(() => {
+    if (!settingsLoaded || !updateChecksEnabled) return;
+
+    const timer = setInterval(() => autoCheckRef.current(), AUTO_CHECK_TICK_MS);
+    return () => clearInterval(timer);
+  }, [settingsLoaded, updateChecksEnabled]);
+
   // Update checking functions
   const checkForUpdates = async () => {
     if (!updateChecksEnabled || isChecking) return;
+
+    // Record the attempt up front so a hung or failing check still pushes the
+    // next automatic one out by a full interval instead of retrying on every
+    // tick.
+    lastCheckAtRef.current = Date.now();
 
     try {
       setIsChecking(true);
@@ -92,6 +117,22 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       isManualCheckRef.current = false;
     }
   };
+
+  // Keep the timer's view of the component fresh. The interval above is
+  // created once, so without re-assigning this after every render it would
+  // capture the first render's state forever and never notice, say, a
+  // download already in progress. Assigned in an effect rather than during
+  // render so a render React discards can never leave a stale closure behind.
+  useEffect(() => {
+    autoCheckRef.current = () => {
+      if (!updateChecksEnabled || isChecking || isInstalling) return;
+      // An update we already found is not worth re-confirming - the footer is
+      // already offering it, and a check racing the download helps nobody.
+      if (updateAvailable) return;
+      if (Date.now() - lastCheckAtRef.current < AUTO_CHECK_INTERVAL_MS) return;
+      checkForUpdates();
+    };
+  });
 
   const handleManualUpdateCheck = () => {
     if (!updateChecksEnabled) return;
