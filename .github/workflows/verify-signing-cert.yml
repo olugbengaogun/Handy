@@ -65,10 +65,16 @@ jobs:
             -s -k "$KEYCHAIN_PASSWORD" verify.keychain > /dev/null
           rm -f cert.p12
 
-          IDENTITY=$(security find-identity -v -p codesigning verify.keychain \
+          # Deliberately no -v. That flag lists only identities with a trusted
+          # chain, and a self-signed certificate is trusted on the Mac that
+          # created it but never in a fresh CI keychain. Trust governs
+          # Gatekeeper, not whether codesign can use the key - so filtering on
+          # it here would reject a perfectly good certificate. The signing step
+          # below is the honest test of usability.
+          IDENTITY=$(security find-identity -p codesigning verify.keychain \
             | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
           if [ -z "$IDENTITY" ]; then
-            echo "FAIL: imported, but macOS does not accept it for code signing." >&2
+            echo "FAIL: imported, but no code-signing identity is present." >&2
             echo "  The certificate was probably not created with Certificate Type: Code Signing." >&2
             exit 1
           fi
