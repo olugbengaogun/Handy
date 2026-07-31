@@ -9,10 +9,29 @@
   --light-color-logo-primary: #a2e0fa;
   --light-color-logo-stroke: #273538;
 
+  /* The accent as *text*. logo-primary is tuned to be painted behind things —
+     the logo, the sidebar selection, model chips — and measures 1.39:1 on the
+     light background, so anything written in it is effectively invisible
+     (which is exactly how "Update available" read in the footer).
+
+     Same hue as the logo and the brand accent (198), darkened until it clears
+     WCAG AA with room to spare: verified 5.57:1. Deliberately not reusing
+     --color-background-ui (#097cac): as text that measures 4.52:1, which
+     passes while hugging the 4.5 minimum, and this file's stated preference
+     is headroom over hugging the bar.
+
+     Dark mode already had the contrast and reuses its logo-primary unchanged
+     at 8.70:1, so the accent still reads as one colour across both themes.
+
+     Use for accent-coloured text on the page background; keep logo-primary
+     for fills, borders and tints. */
+  --light-color-accent-text: #086d97;
+
   --dark-color-text: #fbfbfb;
   --dark-color-background: #2c2b29;
   --dark-color-logo-primary: #8cd5f2;
   --dark-color-logo-stroke: #d1f7fa;
+  --dark-color-accent-text: #8cd5f2;
 
   /* Semantic status colors. First used by SecureInputWarning; intended to
      replace the ad-hoc yellow-500/red-500 usages (e.g. ui/Alert.tsx) over
@@ -31,13 +50,19 @@
      comes from these shadows + the existing hairline border, not a color
      shift. Dark mode's `--color-surface` below IS a real, verified lift. */
   --light-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --light-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --light-shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
-  --light-shadow-xl: 0 12px 36px rgba(0, 0, 0, 0.14), 0 4px 10px rgba(0, 0, 0, 0.08);
+  --light-shadow-md:
+    0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --light-shadow-lg:
+    0 4px 16px rgba(0, 0, 0, 0.1), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --light-shadow-xl:
+    0 12px 36px rgba(0, 0, 0, 0.14), 0 4px 10px rgba(0, 0, 0, 0.08);
   --dark-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --dark-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --dark-shadow-lg: 0 4px 20px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
-  --dark-shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.35);
+  --dark-shadow-md:
+    0 2px 10px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --dark-shadow-lg:
+    0 4px 20px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --dark-shadow-xl:
+    0 12px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.35);
 
   /* Tokens that do not change between light and dark */
   /* Handy Plus brand accent: sky blue, matching the app icon, chosen to be
@@ -60,6 +85,7 @@
   --color-text: var(--light-color-text);
   --color-background: var(--light-color-background);
   --color-logo-primary: var(--light-color-logo-primary);
+  --color-accent-text: var(--light-color-accent-text);
   --color-logo-stroke: var(--light-color-logo-stroke);
   --color-warning: var(--light-color-warning);
   --color-error: var(--light-color-error);
@@ -77,6 +103,7 @@
     --color-text: var(--dark-color-text);
     --color-background: var(--dark-color-background);
     --color-logo-primary: var(--dark-color-logo-primary);
+    --color-accent-text: var(--dark-color-accent-text);
     --color-logo-stroke: var(--dark-color-logo-stroke);
     --color-warning: var(--dark-color-warning);
     --color-error: var(--dark-color-error);
