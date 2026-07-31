@@ -12,7 +12,14 @@
 ####
 name: "Verify signing certificate"
 
-on: workflow_dispatch
+# TEMPORARY: the push trigger exists only so this can run before the workflow
+# reaches the default branch (workflow_dispatch is unavailable until then).
+# Remove it once this is merged.
+on:
+  workflow_dispatch:
+  push:
+    branches: [worktree-periodic-update-check]
+    paths: [".github/workflows/verify-signing-cert.yml"]
 
 jobs:
   verify:
