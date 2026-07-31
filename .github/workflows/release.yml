@@ -46,19 +46,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # This fork only ships Apple Silicon macOS + Windows x64 builds -
-          # it's built for personal use on the maintainer's own hardware.
-          # Anyone needing Intel Mac, Windows-on-ARM, or Linux builds should
+          # This fork only ships Apple Silicon macOS builds for now - it's
+          # built for personal use on the maintainer's own hardware, and
+          # building every platform on every release was taking too long.
+          # Windows x64 support is paused, not removed: re-add the
+          # "windows-latest" / "x86_64-pc-windows-msvc" entry below (see
+          # this file's git history) once there's actual demand for it.
+          # Anyone needing Intel Mac, Windows, or Linux builds today should
           # get the original, actively cross-platform-maintained Handy from
-          # cjpais/Handy instead. Re-add matrix entries here (see the full
-          # set in upstream's release.yml or this file's git history) if
-          # that ever changes.
+          # cjpais/Handy instead.
           - platform: "macos-26" # for Arm based macs (M1 and above). Uses macOS 26 for Apple Intelligence SDK.
             args: "--target aarch64-apple-darwin"
             target: "aarch64-apple-darwin"
-          - platform: "windows-latest"
-            args: ""
-            target: "x86_64-pc-windows-msvc"
 
     uses: ./.github/workflows/build.yml
     with:
