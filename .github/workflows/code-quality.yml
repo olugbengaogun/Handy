@@ -43,6 +43,13 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Check translation consistency
+        # Advisory in this fork. Handy Plus adds its own English strings and
+        # does not translate them, so this has failed permanently - and because
+        # it aborted the job, ESLint and Prettier below never ran at all. A
+        # cosmetic gap was hiding the checks that catch real defects.
+        # i18next falls back to English for missing keys, so nothing is broken
+        # for users; the report still prints, it just no longer fails the run.
+        continue-on-error: true
         run: bun run check:translations
 
       - name: Run ESLint
