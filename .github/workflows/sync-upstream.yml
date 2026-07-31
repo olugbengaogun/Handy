@@ -66,8 +66,72 @@ jobs:
             exit 0
           fi
 
+          # Upstream bumps its own version on every release, and this fork now
+          # bumps the same line on every automatic release - so CJ shipping
+          # anything collides here. Left alone that would stop the automation
+          # roughly every time he releases, which is precisely what it exists
+          # to avoid, and for a line whose resolution is never in doubt: this
+          # fork's numbering is deliberately decoupled, so ours always wins.
+          #
+          # Strictly scoped. Every conflicting line, in every conflicting
+          # file, must be a bare version declaration. One line of anything
+          # else and this refuses and the conflict goes to a human, because a
+          # merge nobody read is only acceptable when there is nothing to read.
+          resolve_version_only_conflict() {
+            local f
+            for f in $(git diff --name-only --diff-filter=U); do
+              awk '
+                function keyof(line,   s) {
+                  s = line
+                  sub(/^[[:space:]]+/, "", s)
+                  if (s ~ /^"/) { sub(/^"/, "", s); sub(/".*$/, "", s); return s }
+                  sub(/[[:space:]]*=.*$/, "", s)
+                  return s
+                }
+                function allowed(k) {
+                  return k == "version" || k == "productName" || k == "identifier" ||
+                         k == "description" || k == "authors" || k == "name"
+                }
+                /^<<<<<<< / { side = 1; delete ours; delete theirs; no = 0; nt = 0; next }
+                /^=======$/ { if (side) { side = 2; next } }
+                /^>>>>>>> / {
+                  if (side) {
+                    # Same keys on both sides, all of them fork identity, or
+                    # this is not a collision anyone can resolve unread.
+                    if (no != nt) bad = 1
+                    for (k in ours) if (!(k in theirs)) bad = 1
+                    for (k in theirs) if (!(k in ours)) bad = 1
+                    side = 0
+                    next
+                  }
+                }
+                side == 1 { k = keyof($0); if (k == "" || !allowed(k)) bad = 1; else { ours[k] = 1; no++ } ; next }
+                side == 2 { k = keyof($0); if (k == "" || !allowed(k)) bad = 1; else { theirs[k] = 1; nt++ } ; next }
+                END { exit bad ? 1 : 0 }
+              ' "$f" || return 1
+            done
+
+            # Keep our side of each conflict block while leaving the rest of
+            # the file as git merged it - `git checkout --ours` would throw
+            # away upstream's other, non-conflicting edits to the same file.
+            for f in $(git diff --name-only --diff-filter=U); do
+              awk '
+                /^<<<<<<< / { side = 1; next }
+                /^=======$/ { if (side) { side = 2; next } }
+                /^>>>>>>> / { if (side) { side = 0; next } }
+                side == 2   { next }
+                            { print }
+              ' "$f" > "$f.resolved" && mv "$f.resolved" "$f"
+              git add "$f"
+            done
+            git commit --no-edit
+          }
+
           if git merge upstream/main --no-edit; then
             echo "Merged cleanly, running tests before pushing."
+            echo "status=merged" >> "$GITHUB_OUTPUT"
+          elif resolve_version_only_conflict; then
+            echo "Only the version line collided - kept this fork's version."
             echo "status=merged" >> "$GITHUB_OUTPUT"
           else
             echo "Merge conflict — leaving conflict markers for review."
