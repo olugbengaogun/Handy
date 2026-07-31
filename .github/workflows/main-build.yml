@@ -48,5 +48,10 @@ jobs:
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
       upload-artifacts: true
-      sign-binaries: true
+      # False in this fork, which has no paid Apple or Azure certificates -
+      # asking for them made both macOS jobs fail on every push to main, for a
+      # certificate that was never going to be there. False is also what
+      # release.yml passes, so CI now builds the same way releases do, and the
+      # macOS jobs pick up the stable self-signed identity (see build.yml).
+      sign-binaries: false
     secrets: inherit
