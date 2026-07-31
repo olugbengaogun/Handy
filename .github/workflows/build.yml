@@ -295,8 +295,11 @@ jobs:
           # No -v: that lists only identities with a trusted chain, and a
           # self-signed certificate is never trusted in a fresh CI keychain.
           # Trust governs Gatekeeper, not whether codesign can use the key.
+          # The SHA-1 hash, not the display name: when the chain is untrusted
+          # find-identity writes the trust status inside the quotes
+          # ("Name (CSSMERR_TP_NOT_TRUSTED)"), which codesign cannot resolve.
           IDENTITY=$(security find-identity -p codesigning selfsign.keychain \
-            | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
+            | awk '/^[[:space:]]*[0-9]+\)/ { print $2; exit }')
 
           if [ -z "$IDENTITY" ]; then
             echo "Certificate imported but no codesigning identity found - refusing to fall back to ad-hoc silently." >&2

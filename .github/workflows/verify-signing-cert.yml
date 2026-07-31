@@ -71,14 +71,19 @@ jobs:
           # Gatekeeper, not whether codesign can use the key - so filtering on
           # it here would reject a perfectly good certificate. The signing step
           # below is the honest test of usability.
+          # Take the SHA-1 hash, not the display name: when the chain is not
+          # trusted, find-identity writes the trust status INSIDE the quotes
+          # ("Name (CSSMERR_TP_NOT_TRUSTED)"), and passing that to codesign
+          # fails with "no identity found". The hash never carries that.
           IDENTITY=$(security find-identity -p codesigning verify.keychain \
-            | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
+            | awk '/^[[:space:]]*[0-9]+\)/ { print $2; exit }')
           if [ -z "$IDENTITY" ]; then
             echo "FAIL: imported, but no code-signing identity is present." >&2
             echo "  The certificate was probably not created with Certificate Type: Code Signing." >&2
             exit 1
           fi
           echo "Identity: $IDENTITY"
+          security find-identity -p codesigning verify.keychain | sed 's/^/  /'
 
           # Importing proves the password. Signing proves the certificate is
           # actually usable, which is a different question.
