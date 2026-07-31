@@ -241,6 +241,67 @@ jobs:
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
           echo "Certificate imported."
 
+      # Handy Plus only. This fork has no paid Apple Developer certificate, so
+      # sign-binaries is false and the bundler falls back to the ad-hoc
+      # signingIdentity ("-") it inherits from upstream. Ad-hoc signatures
+      # carry no stable designated requirement, so macOS cannot tell that
+      # version N+1 is the same app as version N - and the user has to
+      # re-grant Microphone and Accessibility on EVERY update. Importing one
+      # unchanging self-signed certificate gives the app a constant identity
+      # across builds, which is all TCC needs to keep those grants.
+      #
+      # APPLE_SIGNING_IDENTITY takes precedence over tauri.conf.json, so that
+      # file stays byte-identical to upstream and this costs no merge surface.
+      # Notarization is untouched: it only runs when APPLE_ID and friends are
+      # set, which happens exclusively on the paid sign-binaries path.
+      #
+      # With no certificate secret configured this is a no-op and the build
+      # stays ad-hoc, exactly as before.
+      - name: Import stable self-signed macOS identity
+        if: contains(inputs.platform, 'macos') && !inputs.sign-binaries
+        shell: bash
+        env:
+          SELF_SIGNED_CERTIFICATE: ${{ secrets.MACOS_SELF_SIGNED_CERTIFICATE }}
+          SELF_SIGNED_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SELF_SIGNED_CERTIFICATE:-}" ]; then
+            echo "No self-signed certificate configured - build stays ad-hoc signed."
+            exit 0
+          fi
+
+          # Generated per run rather than stored: this keychain exists only for
+          # the life of the job, so a fixed password would be a secret for no
+          # reason.
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+
+          echo "$SELF_SIGNED_CERTIFICATE" | base64 --decode > self-signed.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" selfsign.keychain
+          security default-keychain -s selfsign.keychain
+          security list-keychains -d user -s selfsign.keychain login.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" selfsign.keychain
+          security set-keychain-settings -t 3600 -u selfsign.keychain
+          security import self-signed.p12 -k selfsign.keychain \
+            -P "$SELF_SIGNED_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" selfsign.keychain > /dev/null
+          rm -f self-signed.p12
+
+          # A self-signed cert is not a "Developer ID Application", so the
+          # grep the paid path uses would find nothing. This keychain was
+          # created seconds ago and holds exactly one identity, so take it.
+          IDENTITY=$(security find-identity -v -p codesigning selfsign.keychain \
+            | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
+
+          if [ -z "$IDENTITY" ]; then
+            echo "Certificate imported but no codesigning identity found - refusing to fall back to ad-hoc silently." >&2
+            exit 1
+          fi
+
+          echo "Signing with stable identity: $IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
       - name: Patch asset name pattern
         id: patch-release-name
         shell: bash
