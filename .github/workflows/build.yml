@@ -610,8 +610,36 @@ jobs:
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
           args: ${{ inputs.build-args }}
 
+      # Releases publish themselves now, and nothing anywhere else launches the
+      # app, so this is the only thing standing between a broken build and the
+      # user's Mac. Cheap and decisive: main() parses CLI args before any Tauri
+      # or GUI setup (see main.rs), so --help exits 0 on a headless runner -
+      # and reaching main() at all proves dyld resolved every linked library.
+      # A bundle missing a dylib dies here rather than on first double-click.
+      - name: Smoke-test the built app
+        if: contains(inputs.platform, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find src-tauri/target -name "*.app" -type d | head -1)
+          [ -n "$APP" ] || { echo "No .app bundle was produced." >&2; exit 1; }
+          BIN="$APP/Contents/MacOS/handy"
+          [ -x "$BIN" ] || { echo "No executable at $BIN" >&2; exit 1; }
+
+          # Bounded, because a hang here would otherwise burn the job timeout.
+          if perl -e 'alarm 60; exec @ARGV or exit 127' -- "$BIN" --help > /dev/null 2>&1; then
+            echo "App launches cleanly - dynamic linking is intact."
+          else
+            echo "The built app could not start. Refusing to ship it." >&2
+            echo "Linked libraries:" >&2
+            otool -L "$BIN" >&2 || true
+            exit 1
+          fi
+
       - name: Verify macOS dylib bundling
-        if: inputs.target == 'x86_64-apple-darwin'
+        # Was pinned to x86_64, which this fork does not build - so it has
+        # never run on anything shipped here. Any macOS target now.
+        if: contains(inputs.platform, 'macos')
         shell: bash
         run: |
           APP=$(find src-tauri/target -name "*.app" -type d | head -1)
