@@ -1,6 +1,13 @@
 name: "Release"
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish automatically once the assets verify. Off = draft, as before."
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   create-release:
@@ -77,3 +84,76 @@ jobs:
       # stale cached native lib can never be linked into a shipped artifact.
       no-cache: true
     secrets: inherit
+
+  # Publishing is what actually ships to users: the Tauri updater reads
+  # /releases/latest, and a draft is invisible to it. So this is deliberately
+  # a separate job that `needs` every build, which means GitHub skips it for
+  # free if anything upstream failed - a broken build can never publish.
+  #
+  # It also closes the window where a release is public but incomplete. The
+  # assets arrive in stages (tauri-action, then the stable-name dmg), and a
+  # published release whose latest.json points at a missing or truncated
+  # archive is worse than no release at all: the updater would find an update
+  # on every launch and fail to install it, forever. Everything is therefore
+  # verified against the API before the draft flag comes off, and the flip is
+  # the very last thing that happens.
+  verify-and-publish:
+    if: ${{ inputs.publish }}
+    needs: [create-release, publish-tauri]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the release, then publish it
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: "v${{ needs.create-release.outputs.version }}"
+          EXPECTED_VERSION: "${{ needs.create-release.outputs.version }}"
+        run: |
+          set -euo pipefail
+
+          fail() { echo "REFUSING TO PUBLISH $TAG: $1" >&2; exit 1; }
+
+          # Read the truth from the API rather than trusting what this run
+          # believes it uploaded.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets > release.json
+          echo "Assets attached to $TAG:"
+          jq -r '.assets[] | "  \(.name)  \(.size) bytes"' release.json
+
+          # The updater's manifest and the archive it points at.
+          TARBALL=$(jq -r '[.assets[].name | select(endswith(".app.tar.gz"))][0] // ""' release.json)
+          [ -n "$TARBALL" ] || fail "no .app.tar.gz - there is nothing for the updater to install"
+          jq -e --arg n "${TARBALL}.sig" 'any(.assets[]; .name == $n)' release.json > /dev/null \
+            || fail "$TARBALL has no .sig - the updater rejects unsigned archives"
+          jq -e 'any(.assets[]; .name == "latest.json")' release.json > /dev/null \
+            || fail "no latest.json - the updater would never see this release"
+          jq -e 'any(.assets[]; .name == "HandyPlus.dmg")' release.json > /dev/null \
+            || fail "no stable-name HandyPlus.dmg"
+
+          # A truncated upload is the failure that matters most, because it
+          # still looks like a valid release from the outside.
+          while read -r name size; do
+            [ "$size" -ge 5000000 ] || fail "$name is only $size bytes - truncated upload"
+          done < <(jq -r '.assets[]
+            | select((.name | endswith(".dmg")) or (.name | endswith(".app.tar.gz")))
+            | "\(.name) \(.size)"' release.json)
+
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --dir . --clobber
+          jq -e . latest.json > /dev/null || fail "latest.json is not valid JSON"
+
+          MANIFEST_VERSION=$(jq -r '.version // ""' latest.json)
+          [ "$MANIFEST_VERSION" = "$EXPECTED_VERSION" ] \
+            || fail "latest.json says '$MANIFEST_VERSION' but this release is '$EXPECTED_VERSION' - a stale build was published under a new version"
+
+          # Directly guards the partial-upload race: every file the manifest
+          # promises must actually be attached.
+          while read -r url; do
+            asset=$(basename "$url")
+            jq -e --arg n "$asset" 'any(.assets[]; .name == $n)' release.json > /dev/null \
+              || fail "latest.json points at '$asset', which is not attached to the release"
+          done < <(jq -r '.platforms[].url' latest.json)
+
+          echo "All checks passed - publishing $TAG."
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
