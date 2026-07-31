@@ -573,6 +573,35 @@ jobs:
             src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
           retention-days: 30
 
+      - name: Upload stable-filename DMG (for external download links)
+        # tauri-action's default release-asset name bakes in the version
+        # (e.g. Handy.Plus_1.0.1_aarch64.dmg), which changes every release
+        # and would break any hardcoded download link (e.g. the landing
+        # page). This uploads an *additional*, byte-stable-named copy -
+        # HandyPlus.dmg - to the same release alongside the versioned one,
+        # so `releases/latest/download/HandyPlus.dmg` always resolves.
+        if: ${{ inputs.release-id != '' && contains(inputs.platform, 'macos') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          DMG=$(find "src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg" -name "*.dmg" | head -1)
+          cp "$DMG" HandyPlus.dmg
+
+          # Repeated/retried runs against the same draft release would
+          # otherwise 422 on a duplicate asset name - delete any prior copy.
+          EXISTING_ID=$(gh api "repos/${{ github.repository }}/releases/${{ inputs.release-id }}/assets" \
+            --jq '.[] | select(.name=="HandyPlus.dmg") | .id')
+          if [ -n "$EXISTING_ID" ]; then
+            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$EXISTING_ID"
+          fi
+
+          gh api --method POST \
+            -H "Content-Type: application/x-apple-diskimage" \
+            "repos/${{ github.repository }}/releases/${{ inputs.release-id }}/assets?name=HandyPlus.dmg" \
+            --input HandyPlus.dmg
+
       - name: Install FUSE for AppImage processing
         if: contains(inputs.platform, 'ubuntu')
         run: |
