@@ -18,9 +18,7 @@ export const KeepAudioRecordings: React.FC<KeepAudioRecordingsProps> =
     return (
       <ToggleSwitch
         checked={keepAudioRecordings}
-        onChange={(enabled) =>
-          updateSetting("keep_audio_recordings", enabled)
-        }
+        onChange={(enabled) => updateSetting("keep_audio_recordings", enabled)}
         isUpdating={isUpdating("keep_audio_recordings")}
         label={t("settings.advanced.keepAudioRecordings.label")}
         description={t("settings.advanced.keepAudioRecordings.description")}

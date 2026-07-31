@@ -29,7 +29,9 @@ export const HistoryLimit: React.FC<HistoryLimitProps> = ({
     }
   };
 
-  const handleUnlimitedChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUnlimitedChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     updateSetting(
       "recording_retention_period",
       event.target.checked ? "never" : "preserve_limit",
