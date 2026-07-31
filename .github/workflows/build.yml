@@ -637,9 +637,14 @@ jobs:
           fi
 
       - name: Verify macOS dylib bundling
-        # Was pinned to x86_64, which this fork does not build - so it has
-        # never run on anything shipped here. Any macOS target now.
-        if: contains(inputs.platform, 'macos')
+        # Left pinned to x86_64 deliberately. This fork only builds aarch64, so
+        # it never runs here - but enabling it unproven risks blocking every
+        # release on an arm64-specific false positive, and the smoke test above
+        # already covers the failure it exists to catch: a missing @rpath
+        # dependency stops the process at launch, which is exactly what that
+        # step detects, and it detects it by observation rather than by
+        # replicating dyld's rules.
+        if: inputs.target == 'x86_64-apple-darwin'
         shell: bash
         run: |
           APP=$(find src-tauri/target -name "*.app" -type d | head -1)
