@@ -23,6 +23,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # Dispatching the release workflow, and filing the one issue the circuit
+  # breaker raises when it stops doing so.
+  actions: write
+  issues: write
 
 jobs:
   sync:
@@ -42,6 +46,10 @@ jobs:
       - name: Fetch upstream and attempt merge
         id: merge
         run: |
+          # Recorded before merging so the generated release notes can list
+          # exactly what this sync brought in.
+          echo "before=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
           git remote add upstream https://github.com/cjpais/Handy.git
           git fetch upstream main
 
@@ -101,9 +109,107 @@ jobs:
             echo "pass=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push clean, green merge straight to main
+      - name: Bump version, write notes, push, and release
         if: steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'true'
-        run: git push origin HEAD:main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BEFORE: ${{ steps.merge.outputs.before }}
+        run: |
+          set -euo pipefail
+
+          # Each release needs its own tag, and the tag comes from the version
+          # in tauri.conf.json - so shipping upstream changes automatically
+          # means bumping automatically. Patch only: minor and major stay
+          # deliberate, so this fork's numbering still means something rather
+          # than just counting CJ's commits.
+          CURRENT=$(jq -r '.version' src-tauri/tauri.conf.json)
+          IFS=. read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW="$MAJOR.$MINOR.$((PATCH + 1))"
+          echo "Version $CURRENT -> $NEW"
+
+          # Targeted line edits rather than a JSON/TOML rewriter on purpose:
+          # reformatting these files would collide with upstream on every
+          # future merge. Anchored to the two-space top-level indent so a
+          # nested "version" key added later can never be hit by accident.
+          sed -i "s/^  \"version\": \"$CURRENT\",\$/  \"version\": \"$NEW\",/" src-tauri/tauri.conf.json
+          sed -i "s/^  \"version\": \"$CURRENT\",\$/  \"version\": \"$NEW\",/" package.json
+          sed -i "0,/^version = \"$CURRENT\"\$/s//version = \"$NEW\"/" src-tauri/Cargo.toml
+          sed -i "/^name = \"handy\"\$/{n;s/^version = \".*\"\$/version = \"$NEW\"/}" src-tauri/Cargo.lock
+
+          # Assert the exact field, not merely that the string turns up
+          # somewhere in the file. A partial bump is the one failure that
+          # produces a fully green, successfully published, wrong release.
+          read_toml_version() {
+            awk '/^\[package\]/ { inpkg = 1; next }
+                 /^\[/ { inpkg = 0 }
+                 inpkg && /^version = / { gsub(/[" ]/, ""); sub(/^version=/, ""); print; exit }' "$1"
+          }
+          read_lock_version() {
+            awk '/^name = "handy"$/ { getline; gsub(/[" ]/, ""); sub(/^version=/, ""); print; exit }' "$1"
+          }
+
+          [ "$(jq -r '.version' src-tauri/tauri.conf.json)" = "$NEW" ] \
+            || { echo "tauri.conf.json version is not $NEW" >&2; exit 1; }
+          [ "$(jq -r '.version' package.json)" = "$NEW" ] \
+            || { echo "package.json version is not $NEW" >&2; exit 1; }
+          [ "$(read_toml_version src-tauri/Cargo.toml)" = "$NEW" ] \
+            || { echo "Cargo.toml [package] version is not $NEW" >&2; exit 1; }
+          [ "$(read_lock_version src-tauri/Cargo.lock)" = "$NEW" ] \
+            || { echo "Cargo.lock handy version is not $NEW" >&2; exit 1; }
+
+          # Release notes, unless someone has already written better ones by
+          # hand. Machine notes are a changelog rather than prose, which is
+          # exactly why an existing file always wins.
+          NOTES="src/content/release-notes/$NEW.md"
+          if [ ! -f "$NOTES" ]; then
+            {
+              echo "## Changes from upstream"
+              echo
+              git log --no-merges --pretty='- %s' "$BEFORE..HEAD" | head -50
+            } > "$NOTES"
+            echo "Wrote $NOTES"
+          fi
+
+          git add -A
+          git commit -m "chore: release v$NEW (automated upstream sync)"
+          git push origin HEAD:main
+
+          # Circuit breaker. If the last two release runs both ended badly, a
+          # third identical attempt will not help - stop, and say so once
+          # rather than filing an issue a day. Deliberately stateless: it reads
+          # history instead of keeping a counter, so one manual green release
+          # re-arms it automatically.
+          #
+          # Anything that is not a success counts, because a cancelled or
+          # timed-out run is just as broken as a failed one; only a genuine
+          # success should clear it. (Blind spot: a dispatch that never creates
+          # a run at all is invisible here - `gh workflow run` failing outright
+          # fails this step instead.)
+          BAD=$(gh run list --workflow release.yml --repo "$GITHUB_REPOSITORY" \
+            --limit 2 --json conclusion \
+            --jq '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")] | length')
+          SEEN=$(gh run list --workflow release.yml --repo "$GITHUB_REPOSITORY" \
+            --limit 2 --json conclusion --jq 'length')
+
+          if [ "$SEEN" -ge 2 ] && [ "$BAD" -ge 2 ]; then
+            echo "The last two release runs failed - not dispatching another."
+            TITLE="Auto-release halted after repeated failures"
+            EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "\"$TITLE\" in:title" --json number --jq '.[0].number // ""')
+            if [ -z "$EXISTING" ]; then
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body \
+          "The two most recent Release runs did not succeed, so the daily sync has stopped dispatching new ones.
+
+          Upstream changes are still being merged into \`main\` as usual - only the automatic release is paused, and v$NEW is sitting on \`main\` unreleased.
+
+          To resume: fix whatever broke, run the Release workflow manually once, and close this issue. A single successful run re-arms the automation on its own."
+            fi
+            exit 0
+          fi
+
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main -f publish=true
+          echo "Dispatched release v$NEW."
 
       - name: Push a branch and open a PR for review
         if: steps.merge.outputs.status == 'conflict' || (steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'false')

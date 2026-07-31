@@ -1,0 +1,89 @@
+####
+# Handy Plus only. Undoes a bad automatic release.
+#
+# Releases publish themselves now, so there has to be a way to take one back
+# that does not involve a laptop, a rebuild, or remembering any commands. The
+# Tauri updater simply asks GitHub for the latest published release, so moving
+# that marker to an earlier tag is enough to put every user back on the old
+# version - no rebuild, just a metadata change.
+#
+# Runnable from the GitHub mobile app: Actions -> Rollback release -> Run
+# workflow. Leave the input blank to fall back one release.
+####
+name: "Rollback release"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to roll back to, e.g. v1.0.1. Blank = the previous published release."
+        required: false
+        type: string
+
+jobs:
+  rollback:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point the updater at an earlier release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_INPUT: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          fail() { echo "ROLLBACK ABORTED: $1" >&2; exit 1; }
+
+          # Drafts are invisible to the updater, so they are not candidates.
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 30 \
+            --json tagName,isDraft,publishedAt \
+            --jq '[.[] | select(.isDraft == false)] | sort_by(.publishedAt) | reverse' \
+            > published.json
+
+          COUNT=$(jq 'length' published.json)
+          [ "$COUNT" -ge 2 ] || fail "only $COUNT published release(s) exist - nothing to roll back to"
+
+          CURRENT=$(jq -r '.[0].tagName' published.json)
+          if [ -n "${TARGET_INPUT:-}" ]; then
+            TARGET="$TARGET_INPUT"
+          else
+            TARGET=$(jq -r '.[1].tagName' published.json)
+          fi
+
+          echo "Currently published: $CURRENT"
+          echo "Rolling back to:     $TARGET"
+
+          [ "$TARGET" != "$CURRENT" ] || fail "$TARGET is already the current release"
+          jq -e --arg t "$TARGET" 'any(.[]; .tagName == $t)' published.json > /dev/null \
+            || fail "$TARGET is not a published release"
+
+          # Rolling back onto a release the updater cannot read would strand
+          # every user instead of rescuing them, so check before switching.
+          gh release view "$TARGET" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' > target-assets.txt
+          grep -qx "latest.json" target-assets.txt \
+            || fail "$TARGET has no latest.json - the updater could not read it"
+          grep -q "\.app\.tar\.gz$" target-assets.txt \
+            || fail "$TARGET has no .app.tar.gz - there would be nothing to install"
+
+          # The latest marker is exclusive, so this alone moves every user back.
+          gh release edit "$TARGET" --repo "$GITHUB_REPOSITORY" --latest
+
+          # Belt and braces: draft the bad release so its assets are no longer
+          # directly reachable either. Reversible - undrafting restores it.
+          gh release edit "$CURRENT" --repo "$GITHUB_REPOSITORY" --draft=true
+
+          # Confirm against what GitHub actually serves, rather than trusting
+          # that the two edits above did what they claimed.
+          sleep 5
+          SERVED=$(curl -sfL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json" \
+            | jq -r '.version // "unreadable"')
+          EXPECTED="${TARGET#v}"
+
+          if [ "$SERVED" = "$EXPECTED" ]; then
+            echo "Rollback complete - the update feed now serves $SERVED."
+          else
+            fail "the update feed still reports '$SERVED', expected '$EXPECTED' - check the releases page by hand"
+          fi
