@@ -1,0 +1,24 @@
+####
+# TEMPORARY. Exists only to prove the new macOS smoke test and the newly
+# unpinned dylib check actually pass on aarch64 before either is allowed near
+# a real release. Deleted once green - do not merge this file.
+#
+# Builds the same way release.yml does (sign-binaries: false, so the stable
+# self-signed identity is used) but creates no release and uploads nothing.
+####
+name: "TEMP verify release checks"
+
+on:
+  push:
+    branches: [harden-release-checks]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: "macos-26"
+      target: "aarch64-apple-darwin"
+      build-args: "--target aarch64-apple-darwin"
+      sign-binaries: false
+      upload-artifacts: false
+    secrets: inherit
