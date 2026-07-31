@@ -23,7 +23,7 @@ const Footer: React.FC = () => {
   }, []);
 
   const handleAuthorClick = () => {
-    openUrl("https://www.gbengaogun.com").catch((error) => {
+    openUrl("https://www.gbengaogun.com/handy-plus").catch((error) => {
       console.error("Failed to open author website:", error);
     });
   };
