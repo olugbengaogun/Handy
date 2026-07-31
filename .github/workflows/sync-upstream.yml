@@ -81,6 +81,20 @@ jobs:
         id: test
         run: |
           bun install
+
+          # `cargo test` cannot see TypeScript, so without this an upstream
+          # change that breaks the UI build would merge clean, pass the gate,
+          # and land on main - only surfacing whenever someone next cut a
+          # release. Runs first because it fails in seconds where cargo takes
+          # minutes. A failure here is not a step failure: it sets pass=false
+          # so the PR path below opens a branch for review, same as a failing
+          # cargo test.
+          if ! bun run build; then
+            echo "Frontend build failed on the merged result."
+            echo "pass=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if (cd src-tauri && cargo test); then
             echo "pass=true" >> "$GITHUB_OUTPUT"
           else
