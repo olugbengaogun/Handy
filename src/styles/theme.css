@@ -6,13 +6,13 @@
      in App.css reference these, so a hex value lives in exactly one place. */
   --light-color-text: #0f0f0f;
   --light-color-background: #fbfbfb;
-  --light-color-logo-primary: #faa2ca;
-  --light-color-logo-stroke: #382731;
+  --light-color-logo-primary: #a2e0fa;
+  --light-color-logo-stroke: #273538;
 
   --dark-color-text: #fbfbfb;
   --dark-color-background: #2c2b29;
-  --dark-color-logo-primary: #f28cbb;
-  --dark-color-logo-stroke: #fad1ed;
+  --dark-color-logo-primary: #8cd5f2;
+  --dark-color-logo-stroke: #d1f7fa;
 
   /* Semantic status colors. First used by SecureInputWarning; intended to
      replace the ad-hoc yellow-500/red-500 usages (e.g. ui/Alert.tsx) over
@@ -40,14 +40,18 @@
   --dark-shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.55), 0 4px 10px rgba(0, 0, 0, 0.35);
 
   /* Tokens that do not change between light and dark */
-  /* Darkened ~14% from the original #da5893 brand pink: white button text on
-     the original measured 3.62:1 (WCAG AA needs 4.5:1 for body text).
-     #bb4c7e verified at 4.72:1 - comfortable margin, not hugging the
-     minimum, smallest change that clears the bar with headroom. Affects
-     Button's primary variant (where this mattered), plus ToggleSwitch's
-     "on" state and Slider's fill (both purely decorative, no text sits on
-     either, so no functional reason they needed to stay unchanged). */
-  --color-background-ui: #bb4c7e;
+  /* Handy Plus brand accent: sky blue, matching the app icon, chosen to be
+     unmistakably distinct from vanilla Handy's pink at a glance - not just
+     the icon, the in-app buttons/toggles/highlights too. Darkened from the
+     icon's #a2e0fa (same hue) so white button text clears WCAG AA: the
+     icon's blue measured ~1.7:1, #097cac verified at 4.68:1 - comfortable
+     margin, not hugging the 4.5:1 minimum, same "smallest change that
+     clears the bar with headroom" approach as the pink accent it replaces.
+     Affects Button's primary variant (where this mattered), plus
+     ToggleSwitch's "on" state and Slider's fill (both purely decorative,
+     no text sits on either, so no functional reason they needed to stay
+     unchanged). */
+  --color-background-ui: #097cac;
   --color-text-stroke: #f6f6f6;
   --color-mid-gray: #808080;
 
