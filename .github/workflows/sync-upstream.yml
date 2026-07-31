@@ -171,7 +171,16 @@ jobs:
             echo "Wrote $NOTES"
           fi
 
-          git add -A
+          # Named files rather than `git add -A`: this runs after `bun install`
+          # and `cargo test`, both of which can rewrite tracked lockfiles, and
+          # an unattended release commit should contain the release and
+          # nothing it happened to find lying around.
+          git add \
+            src-tauri/tauri.conf.json \
+            package.json \
+            src-tauri/Cargo.toml \
+            src-tauri/Cargo.lock \
+            "$NOTES"
           git commit -m "chore: release v$NEW (automated upstream sync)"
           git push origin HEAD:main
 
