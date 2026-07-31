@@ -602,6 +602,11 @@
         "label": "Show What's New",
         "description": "Show release notes after Handy Plus updates"
       },
+      "whatsNewHistory": {
+        "title": "What's New",
+        "description": "See what changed in each released version, newest first",
+        "button": "View"
+      },
       "appDataDirectory": {
         "title": "App Data Directory",
         "description": "Location where Handy Plus stores its data"
@@ -640,7 +645,10 @@
     "portableUpdateButton": "Open GitHub Releases"
   },
   "whatsNew": {
-    "title": "New in Handy Plus v{{version}}"
+    "title": "New in Handy Plus v{{version}}",
+    "historyTitle": "What's New",
+    "historyVersionHeading": "Version {{version}}",
+    "historyEmpty": "No release notes are bundled with this build yet."
   },
   "common": {
     "loading": "Loading...",

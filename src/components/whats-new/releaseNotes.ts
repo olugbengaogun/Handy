@@ -82,6 +82,16 @@ export const findReleaseNoteToShow = ({
   return candidate;
 };
 
+/**
+ * Every bundled release note, newest version first. Used by the About tab's
+ * release-history view; the update modal deliberately keeps using
+ * `findReleaseNoteToShow`, which is scoped to what the user has not seen yet.
+ */
+export const getAllReleaseNotes = (): ReleaseNote[] =>
+  Array.from(releaseNotesByVersion.values()).sort((a, b) =>
+    compareVersions(b.version, a.version),
+  );
+
 export const findLatestReleaseNote = (): ReleaseNote | null => {
   const candidate = Array.from(releaseNotesByVersion.values()).sort((a, b) =>
     compareVersions(b.version, a.version),

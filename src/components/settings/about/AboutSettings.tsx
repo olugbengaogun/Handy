@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -10,10 +10,15 @@ import { AppLanguageSelector } from "../AppLanguageSelector";
 import { ShowWhatsNewOnUpdate } from "../ShowWhatsNewOnUpdate";
 import { ThemeSelector } from "../ThemeSelector";
 import { LogDirectory } from "../debug";
+import { WhatsNewHistoryModal, getAllReleaseNotes } from "../../whats-new";
 
 export const AboutSettings: React.FC = () => {
   const { t } = useTranslation();
   const [version, setVersion] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // Release notes are bundled at build time, so this never changes at runtime.
+  const releaseNotes = useMemo(() => getAllReleaseNotes(), []);
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -44,6 +49,20 @@ export const AboutSettings: React.FC = () => {
         </SettingContainer>
 
         <ShowWhatsNewOnUpdate descriptionMode="tooltip" grouped={true} />
+
+        <SettingContainer
+          title={t("settings.about.whatsNewHistory.title")}
+          description={t("settings.about.whatsNewHistory.description")}
+          grouped={true}
+        >
+          <Button
+            variant="secondary"
+            size="md"
+            onClick={() => setHistoryOpen(true)}
+          >
+            {t("settings.about.whatsNewHistory.button")}
+          </Button>
+        </SettingContainer>
 
         <SettingContainer
           title={t("settings.about.website.title")}
@@ -89,6 +108,12 @@ export const AboutSettings: React.FC = () => {
           </div>
         </SettingContainer>
       </SettingsGroup>
+
+      <WhatsNewHistoryModal
+        notes={releaseNotes}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 };

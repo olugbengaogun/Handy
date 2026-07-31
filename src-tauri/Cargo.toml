@@ -1,6 +1,6 @@
 [package]
 name = "handy"
-version = "1.0.1"
+version = "1.0.2"
 description = "Handy Plus (a fork of Handy by cjpais)"
 authors = ["cjpais", "olugbengaogun"]
 edition = "2021"
