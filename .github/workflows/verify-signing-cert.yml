@@ -1,0 +1,89 @@
+####
+# Handy Plus only. Checks the self-signed macOS identity in about a minute,
+# without building the app.
+#
+# Worth having as its own workflow because a bad certificate secret does not
+# announce itself: the release build would carry on and produce a perfectly
+# working app that is simply signed with the wrong identity - and the only
+# symptom is the user being asked to re-grant Microphone and Accessibility
+# again on the next update, long after the release went out.
+#
+# Run this after setting or rotating MACOS_SELF_SIGNED_CERTIFICATE.
+####
+name: "Verify signing certificate"
+
+on: workflow_dispatch
+
+jobs:
+  verify:
+    runs-on: macos-26
+    steps:
+      - name: Import the certificate and prove it can sign
+        shell: bash
+        env:
+          SELF_SIGNED_CERTIFICATE: ${{ secrets.MACOS_SELF_SIGNED_CERTIFICATE }}
+          SELF_SIGNED_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SELF_SIGNED_CERTIFICATE:-}" ]; then
+            echo "FAIL: MACOS_SELF_SIGNED_CERTIFICATE is not set." >&2
+            exit 1
+          fi
+          if [ -z "${SELF_SIGNED_CERTIFICATE_PASSWORD:-}" ]; then
+            echo "FAIL: MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD is not set." >&2
+            exit 1
+          fi
+
+          echo "$SELF_SIGNED_CERTIFICATE" | base64 --decode > cert.p12 2>/dev/null \
+            || { echo "FAIL: the secret is not valid base64 - re-run the base64 command and paste the whole output." >&2; exit 1; }
+
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" verify.keychain
+          security default-keychain -s verify.keychain
+          security list-keychains -d user -s verify.keychain login.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" verify.keychain
+          security set-keychain-settings -t 3600 -u verify.keychain
+
+          # The single most likely mistake is a wrong .p12 password, so say so
+          # in words rather than leaving a raw security(1) error.
+          if ! security import cert.p12 -k verify.keychain \
+              -P "$SELF_SIGNED_CERTIFICATE_PASSWORD" -T /usr/bin/codesign 2> import.log; then
+            echo "FAIL: could not import the certificate." >&2
+            sed 's/^/  /' import.log >&2
+            echo "  Most likely MACOS_SELF_SIGNED_CERTIFICATE_PASSWORD does not match the password used when exporting the .p12." >&2
+            exit 1
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" verify.keychain > /dev/null
+          rm -f cert.p12
+
+          IDENTITY=$(security find-identity -v -p codesigning verify.keychain \
+            | sed -n 's/.*"\(.*\)"/\1/p' | head -1)
+          if [ -z "$IDENTITY" ]; then
+            echo "FAIL: imported, but macOS does not accept it for code signing." >&2
+            echo "  The certificate was probably not created with Certificate Type: Code Signing." >&2
+            exit 1
+          fi
+          echo "Identity: $IDENTITY"
+
+          # Importing proves the password. Signing proves the certificate is
+          # actually usable, which is a different question.
+          cp /bin/echo sample
+          codesign --force --options runtime --sign "$IDENTITY" sample
+          codesign --verify --strict --verbose=2 sample
+
+          # The designated requirement is the whole point. It must be pinned to
+          # the certificate, because that is what stays constant between builds.
+          # If it were pinned to a cdhash instead, every build would look like a
+          # different app to macOS and permissions would keep resetting.
+          echo "Designated requirement:"
+          codesign -d --requirements - sample 2>&1 | sed 's/^/  /'
+
+          if codesign -d --requirements - sample 2>&1 | grep -q "certificate"; then
+            echo "PASS: signed with a stable certificate-based identity."
+            echo "Permissions granted to this app will survive future updates."
+          else
+            echo "FAIL: the signature is not certificate-based, so permissions would still reset each update." >&2
+            exit 1
+          fi
