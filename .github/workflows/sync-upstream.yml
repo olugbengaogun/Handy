@@ -206,14 +206,25 @@ jobs:
           # Release notes, unless someone has already written better ones by
           # hand. Machine notes are a changelog rather than prose, which is
           # exactly why an existing file always wins.
+          # Everything since the last release, not just what this merge pulled
+          # in: work the owner pushed himself between syncs is already on main
+          # before the merge, so a merge-scoped range would list CJ's changes
+          # and silently omit his own. Falls back to the merge range only if
+          # the previous tag is missing (first release after this landed).
           NOTES="src/content/release-notes/$NEW.md"
           if [ ! -f "$NOTES" ]; then
+            if git rev-parse -q --verify "refs/tags/v$CURRENT" > /dev/null; then
+              RANGE="v$CURRENT..HEAD"
+            else
+              echo "No tag v$CURRENT - falling back to this sync's merge range."
+              RANGE="$BEFORE..HEAD"
+            fi
             {
-              echo "## Changes from upstream"
+              echo "## What's new in $NEW"
               echo
-              git log --no-merges --pretty='- %s' "$BEFORE..HEAD" | head -50
+              git log --no-merges --pretty='- %s' "$RANGE" | head -50
             } > "$NOTES"
-            echo "Wrote $NOTES"
+            echo "Wrote $NOTES from $RANGE"
           fi
 
           # Named files rather than `git add -A`: this runs after `bun install`
