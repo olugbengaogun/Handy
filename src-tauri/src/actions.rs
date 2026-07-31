@@ -492,7 +492,11 @@ impl ShortcutAction for TranscribeAction {
         // load, mic device open, or the start chime finishing — any of those can
         // take seconds, and none of them should gate how fast background audio
         // stops. If recording fails to start, remove_mute() below restores audio.
-        rm.apply_mute();
+        //
+        // owns_mute is true only if this call is what muted, i.e. no other
+        // still-active recording's mute is in play. It decides whether the
+        // failure path below is allowed to unmute.
+        let owns_mute = rm.apply_mute();
 
         // Load ASR model and VAD model in parallel
         let kickoff_started = Instant::now();
@@ -622,12 +626,15 @@ impl ShortcutAction for TranscribeAction {
             // Revert UI state so we don't stay stuck in the recording overlay, and
             // restore audio since we muted unconditionally above but never recorded.
             //
-            // Exception: "Already recording" means a DIFFERENT, still-active
-            // recording owns the current mute (e.g. this call came from a second
-            // shortcut binding or the --toggle-transcription CLI flag while a
-            // hotkey-triggered recording is in progress) — unmuting here would
-            // wrongly restore audio out from under that still-running recording.
-            if recording_error.as_deref() != Some("Already recording") {
+            // Only if we own the mute. A DIFFERENT, still-active recording may
+            // hold it (e.g. this call came from a second shortcut binding or the
+            // --toggle-transcription CLI flag while a hotkey-triggered recording
+            // is in progress); unmuting then would restore audio out from under
+            // that still-running recording. Ownership is tracked rather than
+            // inferred from the "Already recording" error string, which also
+            // covers the Stopping state — there the previous recording has
+            // already unmuted, so our mute is ours and must be undone here.
+            if owns_mute {
                 rm.remove_mute();
             }
             tm.cancel_stream();

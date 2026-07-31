@@ -1004,6 +1004,11 @@ pub fn run(cli_args: CliArgs) {
             }
             // Teardown transcribe.cpp before exit
             tauri::RunEvent::Exit => {
+                // Never leave the user's system audio muted because they quit
+                // mid-recording. No-ops unless our mute is currently active.
+                if let Some(rm) = app.try_state::<Arc<AudioRecordingManager>>() {
+                    rm.remove_mute();
+                }
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }

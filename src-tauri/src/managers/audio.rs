@@ -219,6 +219,177 @@ fn get_mute() -> Option<bool> {
     None
 }
 
+/// Combines the `get_mute` snapshot and `set_mute(true)` into a single platform
+/// call, so the hotkey path pays one process spawn / COM session instead of two.
+/// This is purely a latency optimization for `apply_mute`'s hot path — on macOS
+/// each `osascript` spawn costs ~50-150ms, which is dead time before the mic
+/// starts capturing.
+///
+/// Returns the prior mute state, `None` = unknown, exactly like `get_mute`. Every
+/// failure path falls back to the original `get_mute()` + `set_mute(true)`
+/// sequence, so behavior on unsupported or misbehaving systems is unchanged.
+#[cfg(target_os = "macos")]
+fn snapshot_and_mute() -> Option<bool> {
+    use std::process::Command;
+
+    // Multiple -e flags are one script in one osascript process: read the prior
+    // state, force-mute, hand the prior state back.
+    let out = Command::new("osascript")
+        .args([
+            "-e",
+            "set wasMuted to (output muted of (get volume settings))",
+            "-e",
+            "set volume output muted true",
+            "-e",
+            "return wasMuted",
+        ])
+        .output();
+
+    if let Ok(out) = out {
+        if out.status.success() {
+            match String::from_utf8_lossy(&out.stdout).trim() {
+                "true" => return Some(true),
+                "false" => return Some(false),
+                // Muting itself succeeded; we just couldn't parse the prior
+                // state. Unknown means "unmute on stop", which is the safe
+                // direction, so don't re-run the script.
+                _ => return None,
+            }
+        }
+    }
+
+    let prev = get_mute();
+    set_mute(true);
+    prev
+}
+
+#[cfg(target_os = "windows")]
+fn snapshot_and_mute() -> Option<bool> {
+    unsafe {
+        use windows::Win32::{
+            Media::Audio::{
+                eMultimedia, eRender, Endpoints::IAudioEndpointVolume, IMMDeviceEnumerator,
+                MMDeviceEnumerator,
+            },
+            System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
+        };
+
+        // Endpoint resolution failed — fall back to the original pair, which
+        // fails silently in the same way.
+        macro_rules! or_fallback {
+            ($expr:expr) => {
+                match $expr {
+                    Ok(val) => val,
+                    Err(_) => {
+                        let prev = get_mute();
+                        set_mute(true);
+                        return prev;
+                    }
+                }
+            };
+        }
+
+        // Matches set_mute: no-op if COM is already initialized on this thread.
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+
+        // Resolve the endpoint once and reuse it for both the read and the
+        // write, instead of get_mute and set_mute each doing their own
+        // CoCreateInstance / GetDefaultAudioEndpoint / Activate sequence.
+        let all_devices: IMMDeviceEnumerator =
+            or_fallback!(CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL));
+        let default_device =
+            or_fallback!(all_devices.GetDefaultAudioEndpoint(eRender, eMultimedia));
+        let volume_interface =
+            or_fallback!(default_device.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None));
+
+        let prev = volume_interface.GetMute().ok().map(|b| b.as_bool());
+        let _ = volume_interface.SetMute(true, std::ptr::null());
+        prev
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn snapshot_and_mute() -> Option<bool> {
+    use std::process::Command;
+
+    // Pin the write to whichever backend answered the read instead of
+    // re-probing wpctl -> pactl -> amixer for it. If that backend then fails
+    // the write, set_mute retries the full chain so we never silently skip
+    // muting.
+    fn mute_via(prev: Option<bool>, program: &str, args: &[&str]) -> Option<bool> {
+        let wrote = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !wrote {
+            set_mute(true);
+        }
+        prev
+    }
+
+    // 1. PipeWire (wpctl): prints "[MUTED]" in the volume line when muted.
+    if let Ok(out) = Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output()
+    {
+        if out.status.success() {
+            let prev = Some(String::from_utf8_lossy(&out.stdout).contains("[MUTED]"));
+            return mute_via(prev, "wpctl", &["set-mute", "@DEFAULT_AUDIO_SINK@", "1"]);
+        }
+    }
+
+    // 2. PulseAudio (pactl): prints "Mute: yes" / "Mute: no".
+    if let Ok(out) = Command::new("pactl")
+        .env("LC_ALL", "C")
+        .args(["get-sink-mute", "@DEFAULT_SINK@"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout).to_lowercase();
+            let prev = if s.contains("yes") {
+                Some(true)
+            } else if s.contains("no") {
+                Some(false)
+            } else {
+                None
+            };
+            return mute_via(prev, "pactl", &["set-sink-mute", "@DEFAULT_SINK@", "1"]);
+        }
+    }
+
+    // 3. ALSA (amixer): prints "[off]" for muted channels, "[on]" otherwise.
+    if let Ok(out) = Command::new("amixer")
+        .env("LC_ALL", "C")
+        .args(["get", "Master"])
+        .output()
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let prev = if s.contains("[off]") {
+                Some(true)
+            } else if s.contains("[on]") {
+                Some(false)
+            } else {
+                None
+            };
+            return mute_via(prev, "amixer", &["set", "Master", "mute"]);
+        }
+    }
+
+    // No backend answered the read; let the original pair try in full.
+    let prev = get_mute();
+    set_mute(true);
+    prev
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+fn snapshot_and_mute() -> Option<bool> {
+    let prev = get_mute();
+    set_mute(true);
+    prev
+}
+
 /// Restores the system mute state after our forced mute, given the state
 /// captured just before we muted. We only ever need to unmute — and only when
 /// the system was NOT already muted beforehand. If the prior state was muted,
@@ -460,10 +631,16 @@ impl AudioRecordingManager {
     /// keypress so muting isn't stuck behind device-open/model-load latency.
     /// Snapshots the system's prior mute state first so `remove_mute` can
     /// restore it instead of unconditionally unmuting.
-    pub fn apply_mute(&self) {
+    ///
+    /// Returns true only when *this* call applied the mute, making the caller its
+    /// owner: if the recording then fails to start, that caller — and only that
+    /// caller — must call `remove_mute`. A false return means either the feature
+    /// is off or something else already owns an active mute, so the caller must
+    /// leave it alone.
+    pub fn apply_mute(&self) -> bool {
         let settings = get_settings(&self.app_handle);
         if !settings.mute_while_recording {
-            return;
+            return false;
         }
 
         let mut mute_guard = self.mute_state.lock().unwrap();
@@ -471,12 +648,25 @@ impl AudioRecordingManager {
         // apply would overwrite prev_muted with our own forced-muted state and
         // strand audio muted on stop.
         if mute_guard.did_mute {
-            return;
+            return false;
         }
-        mute_guard.prev_muted = get_mute();
-        set_mute(true);
+        mute_guard.prev_muted = snapshot_and_mute();
         mute_guard.did_mute = true;
         debug!("Mute applied (prev_muted={:?})", mute_guard.prev_muted);
+        true
+    }
+
+    /// True while our forced "mute while recording" is active. Used to carry the
+    /// mute across a mid-recording stream restart (device change).
+    fn mute_is_active(&self) -> bool {
+        self.mute_state.lock().unwrap().did_mute
+    }
+
+    /// True only while audio is actively being captured. Unlike `is_recording`,
+    /// `Stopping` does not count: by then the stop path has already unmuted, so
+    /// nothing may re-apply a mute.
+    fn is_actively_capturing(&self) -> bool {
+        matches!(*self.state.lock().unwrap(), RecordingState::Recording { .. })
     }
 
     /// Removes mute if it was applied, restoring the system's prior mute state
@@ -522,17 +712,13 @@ impl AudioRecordingManager {
 
         let start_time = Instant::now();
 
-        // Don't mute immediately - caller will handle muting after audio feedback.
-        // The previous stream restored audio on close, so did_mute should already
-        // be false here; if it somehow isn't, restore rather than just clearing the
-        // flag, which would strand system audio muted.
-        {
-            let mut mute_guard = self.mute_state.lock().unwrap();
-            if mute_guard.did_mute {
-                restore_mute(mute_guard.prev_muted);
-                mute_guard.did_mute = false;
-            }
-        }
+        // Deliberately does NOT touch mute_state. Mute is owned by the action
+        // layer (apply_mute on keypress, remove_mute on stop/cancel/failure) and
+        // now runs BEFORE the mic stream is opened, so an active `did_mute` here
+        // is this recording's own mute — restoring it would silently undo the
+        // mute milliseconds after the user pressed the shortcut, i.e. background
+        // audio would never actually stop. Stranded mutes are cleaned up by
+        // stop_microphone_stream, cancel_recording and remove_mute instead.
 
         // Get the selected device from settings, considering clamshell mode.
         // No pre-flight enumeration here: when nothing is configured the
@@ -677,9 +863,23 @@ impl AudioRecordingManager {
         self.invalidate_device_cache();
         // If currently open, restart the microphone stream to use the new device
         if *self.is_open.lock().unwrap() {
+            // stop_microphone_stream unmutes as a safety net. If that mute belongs
+            // to a recording that is still running (device switched mid-recording),
+            // re-apply it after the restart so background audio doesn't bleed back
+            // in for the rest of the take. apply_mute re-snapshots the now-restored
+            // system state, so the eventual remove_mute still lands correctly.
+            let restore_mute_after_restart = self.mute_is_active();
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
             self.start_microphone_stream()?;
+            // Only re-mute if a recording is genuinely still in flight. This runs
+            // on the settings-command thread, so a take that ended while we were
+            // restarting has already unmuted on the shortcut thread; re-applying
+            // then would leave the user's audio muted with nothing left to
+            // restore it.
+            if restore_mute_after_restart && self.is_actively_capturing() {
+                self.apply_mute();
+            }
         }
         Ok(())
     }
@@ -784,6 +984,16 @@ impl AudioRecordingManager {
             RecordingState::Recording { .. } => {
                 *state = RecordingState::Idle;
                 drop(state);
+
+                // Restore audio first: this cancelled recording owns the mute, and
+                // in always-on mode (or with lazy stream close) nothing below
+                // closes the stream, which is the only other thing that would
+                // unmute — the user's system audio would stay muted for good.
+                // Scoped to this arm on purpose: a bare `--cancel` while no
+                // recording is active must not strip the mute of a recording that
+                // is mid-start (mute applied, state not yet Recording), which that
+                // start path unmutes itself if it fails.
+                self.remove_mute();
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     let _ = rec.stop(); // Discard the result
