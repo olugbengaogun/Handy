@@ -666,7 +666,10 @@ impl AudioRecordingManager {
     /// `Stopping` does not count: by then the stop path has already unmuted, so
     /// nothing may re-apply a mute.
     fn is_actively_capturing(&self) -> bool {
-        matches!(*self.state.lock().unwrap(), RecordingState::Recording { .. })
+        matches!(
+            *self.state.lock().unwrap(),
+            RecordingState::Recording { .. }
+        )
     }
 
     /// Removes mute if it was applied, restoring the system's prior mute state

@@ -599,7 +599,9 @@ impl ShortcutAction for TranscribeAction {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
                     if skip_start_chime {
-                        debug!("Skipping start chime: mute_while_recording muted its output device");
+                        debug!(
+                            "Skipping start chime: mute_while_recording muted its output device"
+                        );
                     } else {
                         // Small delay to ensure microphone stream is active
                         let app_clone = app.clone();
