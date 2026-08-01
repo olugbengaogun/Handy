@@ -292,6 +292,16 @@ pub(super) fn run(
     let change_count: NSInteger =
         unsafe { msg_send![&*pasteboard, declareTypes: &*types, owner: &*provider] };
     if change_count <= 0 {
+        // `declareTypes:owner:` clears the pasteboard before installing the
+        // promise. Put the snapshot back before returning so the legacy
+        // fallback does not snapshot (and later restore) an empty clipboard.
+        if let Some(text) = &saved_text {
+            let _ = clipboard.write_text(text);
+        } else if let Some(image) = &saved_image {
+            let _ = clipboard.write_image(image);
+        } else {
+            let _ = clipboard.clear();
+        }
         return Err("declareTypes:owner: failed".to_string());
     }
     info!("[reliable-paste] published transcript as lazy promise (changeCount {change_count})");

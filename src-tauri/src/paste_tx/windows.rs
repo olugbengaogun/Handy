@@ -28,6 +28,7 @@ use crate::clipboard::send_return_key;
 use crate::input::EnigoState;
 use crate::settings::{AutoSubmitKey, ClipboardHandling, PasteMethod};
 use windows::Win32::Foundation::GlobalFree;
+use windows::Win32::Graphics::Gdi::{DeleteObject, HGDIOBJ};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardOwner,
     GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
@@ -76,6 +77,23 @@ pub(super) struct WinTxShared {
     preserve_transcript: bool,
 }
 
+impl Drop for WinTxShared {
+    fn drop(&mut self) {
+        // A bitmap copy is transferred to the clipboard on a successful
+        // restore. If ownership changed, restoration failed, or the worker
+        // exited early, Windows still expects us to release our private copy.
+        let slot = self
+            .saved_bitmap
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(raw) = slot.take() {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(raw as *mut _));
+            }
+        }
+    }
+}
+
 /// The transaction currently holding the clipboard, if any. A new
 /// transaction settles it before snapshotting (see `flush_pending`).
 static PENDING: Mutex<Option<Arc<WinTxShared>>> = Mutex::new(None);
@@ -88,26 +106,43 @@ unsafe fn shared_ptr(hwnd: HWND) -> *const WinTxShared {
     GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const WinTxShared
 }
 
-/// Sends the auto-submit Enter. Uses `try_lock` because the paste caller may
-/// currently hold the enigo lock while waiting for this worker.
-fn send_auto_submit(shared: &WinTxShared) {
-    {
-        let mut st = match shared.state.lock() {
-            Ok(st) => st,
-            Err(_) => return,
-        };
-        if st.auto_submit_sent {
-            return;
-        }
-        st.auto_submit_sent = true;
+/// Claims this transaction's auto-submit exactly once.
+fn claim_auto_submit(shared: &WinTxShared) -> bool {
+    let mut st = match shared.state.lock() {
+        Ok(st) => st,
+        Err(_) => return false,
+    };
+    st.claim_auto_submit()
+}
+
+fn send_auto_submit_with_enigo(shared: &WinTxShared, enigo: &mut enigo::Enigo) {
+    if !claim_auto_submit(shared) {
+        return;
     }
+    if let Err(e) = send_return_key(enigo, shared.auto_submit_key) {
+        warn!("[reliable-paste] auto-submit failed: {e}");
+    }
+}
+
+/// Attempts to send auto-submit from the worker. A concurrent paste owns the
+/// input lock while it flushes this transaction, so contention means "retry on
+/// the next timer tick", not "drop Enter permanently".
+fn try_send_auto_submit(shared: &WinTxShared) -> bool {
     if let Some(enigo_state) = shared.app_handle.try_state::<EnigoState>() {
         match enigo_state.0.try_lock() {
             Ok(mut enigo) => {
-                let _ = send_return_key(&mut enigo, shared.auto_submit_key);
+                send_auto_submit_with_enigo(shared, &mut enigo);
+                true
             }
-            Err(_) => warn!("[reliable-paste] skipping auto-submit: input state busy"),
+            Err(std::sync::TryLockError::WouldBlock) => false,
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                warn!("[reliable-paste] cannot auto-submit: input state poisoned");
+                true
+            }
         }
+    } else {
+        warn!("[reliable-paste] cannot auto-submit: input state unavailable");
+        true
     }
 }
 
@@ -211,7 +246,7 @@ fn ensure_window_class(hinstance: HINSTANCE) {
 /// the snapshot below captures the user's original clipboard content. The
 /// previous worker observes `cancelled` on its next timer tick and tears down
 /// without restoring.
-fn flush_pending() {
+fn flush_pending(enigo: &mut enigo::Enigo) {
     let previous = match PENDING.lock() {
         Ok(mut slot) => slot.take(),
         Err(_) => None,
@@ -228,7 +263,7 @@ fn flush_pending() {
         st.any_receipt_after_injection()
     };
     if previous.auto_submit && receipt {
-        send_auto_submit(&previous);
+        send_auto_submit_with_enigo(&previous, enigo);
     }
     let sequence = *previous.sequence.lock().unwrap();
     let still_ours = unsafe { GetClipboardSequenceNumber() } == sequence;
@@ -286,7 +321,9 @@ unsafe fn restore_snapshot(shared: &WinTxShared) {
     }
     if let Ok(mut bitmap) = shared.saved_bitmap.lock() {
         if let Some(raw) = bitmap.take() {
-            let _ = SetClipboardData(CF_BITMAP.0 as u32, Some(HANDLE(raw as *mut _)));
+            if SetClipboardData(CF_BITMAP.0 as u32, Some(HANDLE(raw as *mut _))).is_err() {
+                let _ = DeleteObject(HGDIOBJ(raw as *mut _));
+            }
         }
     }
     let _ = CloseClipboard();
@@ -445,8 +482,12 @@ fn on_timer(_hwnd: HWND, shared: &WinTxShared) {
 
     // Auto-submit only once the target demonstrably read the transcript;
     // pressing Enter after an unconfirmed paste could submit stale content.
-    if shared.auto_submit && receipt {
-        send_auto_submit(shared);
+    if shared.auto_submit && receipt && !try_send_auto_submit(shared) {
+        // The caller of a newer paste owns Enigo and will flush us itself, or
+        // a short-lived unrelated input operation has it. Do not settle until
+        // Enter is sent (or the new caller claims it) so auto-submit is never
+        // silently lost.
+        return;
     }
 
     let sequence = *shared.sequence.lock().unwrap();
@@ -482,10 +523,6 @@ unsafe fn destroy_window_and_shared(hwnd: HWND) {
 
 fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
     unsafe {
-        // Settle any previous transaction first so the snapshot captures the
-        // user's original clipboard, not the previous transcript.
-        flush_pending();
-
         let hinstance = match GetModuleHandleW(PCWSTR::null()) {
             Ok(hmodule) => HINSTANCE(hmodule.0),
             Err(e) => {
@@ -544,10 +581,17 @@ fn pump_thread(shared: Arc<WinTxShared>, ready: Sender<Result<(), String>>) {
         };
         *shared.sequence.lock().unwrap() = sequence;
         shared.state.lock().unwrap().published_at = Instant::now();
+        if SetTimer(Some(hwnd), TIMER_ID, TIMER_INTERVAL_MS, None) == 0 {
+            // Without a timer there is no receipt/timeout settlement loop and
+            // the delayed-render promise could occupy the clipboard forever.
+            restore_snapshot(&shared);
+            destroy_window_and_shared(hwnd);
+            let _ = ready.send(Err("SetTimer failed".to_string()));
+            return;
+        }
         if let Ok(mut slot) = PENDING.lock() {
             *slot = Some(shared.clone());
         }
-        let _ = SetTimer(Some(hwnd), TIMER_ID, TIMER_INTERVAL_MS, None);
         let _ = ready.send(Ok(()));
 
         let mut msg = MSG::default();
@@ -569,6 +613,12 @@ pub(super) fn run(
     auto_submit_key: AutoSubmitKey,
     clipboard_handling: ClipboardHandling,
 ) -> Result<(), String> {
+    // Do this on the caller while it already owns Enigo. Besides ensuring the
+    // next snapshot sees the user's original clipboard, this lets a previous
+    // transaction deliver its owed auto-submit without racing this paste for
+    // the same input lock.
+    flush_pending(enigo);
+
     let shared = Arc::new(WinTxShared {
         state: Mutex::new(TxState::new()),
         text: text.to_string(),

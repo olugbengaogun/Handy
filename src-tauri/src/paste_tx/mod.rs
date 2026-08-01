@@ -126,6 +126,17 @@ impl TxState {
     pub fn any_receipt_after_injection(&self) -> bool {
         self.last_receipt_after_injection().is_some()
     }
+
+    /// Claims the one permitted auto-submit attempt for this transaction.
+    /// Callers must not claim until they actually own the input device; a
+    /// failed `try_lock` is retryable and must leave this false.
+    pub fn claim_auto_submit(&mut self) -> bool {
+        if self.auto_submit_sent {
+            return false;
+        }
+        self.auto_submit_sent = true;
+        true
+    }
 }
 
 pub(crate) enum WaitDecision {
@@ -279,5 +290,12 @@ mod tests {
         let mut s = state_after_publish(Duration::from_millis(10));
         s.ownership_lost = true;
         assert!(matches!(evaluate(&s, Instant::now()), WaitDecision::Finish));
+    }
+
+    #[test]
+    fn auto_submit_can_only_be_claimed_once() {
+        let mut s = TxState::new();
+        assert!(s.claim_auto_submit());
+        assert!(!s.claim_auto_submit());
     }
 }
