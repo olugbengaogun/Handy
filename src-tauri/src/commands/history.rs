@@ -174,10 +174,7 @@ pub async fn update_recording_retention_period(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn update_keep_audio_recordings(
-    app: AppHandle,
-    keep: bool,
-) -> Result<(), String> {
+pub async fn update_keep_audio_recordings(app: AppHandle, keep: bool) -> Result<(), String> {
     let mut settings = crate::settings::get_settings(&app);
     settings.keep_audio_recordings = keep;
     crate::settings::write_settings(&app, settings);

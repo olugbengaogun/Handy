@@ -565,7 +565,10 @@ impl HistoryManager {
         // or "file_name" isn't misinterpreted as a wildcard pattern.
         let pattern = format!(
             "%{}%",
-            query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+            query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
         );
         const MATCH_CLAUSE: &str =
             "(transcription_text LIKE :pattern ESCAPE '\\' OR post_processed_text LIKE :pattern ESCAPE '\\')";
@@ -623,7 +626,10 @@ impl HistoryManager {
                 );
                 let mut stmt = conn.prepare(&sql)?;
                 let result = stmt
-                    .query_map(named_params! { ":pattern": pattern }, Self::map_history_entry)?
+                    .query_map(
+                        named_params! { ":pattern": pattern },
+                        Self::map_history_entry,
+                    )?
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 result
             }
@@ -673,12 +679,13 @@ impl HistoryManager {
             StatsRange::AllTime => None,
         };
 
-        let query = "SELECT COALESCE(SUM(word_count), 0), COUNT(*), COALESCE(SUM(duration_secs), 0.0)
+        let query =
+            "SELECT COALESCE(SUM(word_count), 0), COUNT(*), COALESCE(SUM(duration_secs), 0.0)
              FROM transcription_history
              WHERE transcription_text != '' AND (?1 IS NULL OR timestamp >= ?1)";
 
-        let (total_words, total_entries, total_duration_secs): (i64, i64, f64) = conn
-            .query_row(query, params![cutoff], |row| {
+        let (total_words, total_entries, total_duration_secs): (i64, i64, f64) =
+            conn.query_row(query, params![cutoff], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?;
 

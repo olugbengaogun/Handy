@@ -869,6 +869,15 @@ pub fn change_paste_delay_after_ms_setting(app: AppHandle, ms: u64) -> Result<()
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_reliable_paste_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.reliable_paste = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_paste_method_setting(app: AppHandle, method: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     let parsed = match method.as_str() {
@@ -1293,7 +1302,6 @@ pub fn change_show_tray_icon_setting(app: AppHandle, enabled: bool) -> Result<()
 
     Ok(())
 }
-
 
 /// Save accelerator settings and make the next model use reload with them.
 /// The currently running transcription, if any, keeps its existing engine.

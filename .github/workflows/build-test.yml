@@ -37,7 +37,10 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      # This fork has no paid Apple/Azure signing certificates. Match release
+      # and main-branch builds so macOS uses the stable self-signed identity
+      # when configured and Windows builds remain unsigned test artifacts.
+      sign-binaries: false
       asset-prefix: "handy-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
