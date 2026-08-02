@@ -4,9 +4,14 @@ import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { arch, platform } from "@tauri-apps/plugin-os";
 import { ProgressBar } from "../shared";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "../../bindings";
+import {
+  resolvePortableInstallerUrl,
+  PORTABLE_RELEASES_URL,
+} from "./portableInstaller";
 
 // How long to wait between automatic background update checks. Handy Plus
 // usually runs for days without a restart, and the launch-time check used to
@@ -33,6 +38,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const [showUpToDate, setShowUpToDate] = useState(false);
   const [showPortableUpdateDialog, setShowPortableUpdateDialog] =
     useState(false);
+  const [portableInstallerUrl, setPortableInstallerUrl] = useState<string>(
+    PORTABLE_RELEASES_URL,
+  );
 
   const { settings, isLoading } = useSettings();
   const settingsLoaded = !isLoading && settings !== null;
@@ -97,6 +105,11 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
       if (update) {
         setUpdateAvailable(true);
         setShowUpToDate(false);
+        // Portable installs can't self-update in place — the manual dialog links
+        // straight at the matching installer from this manifest instead.
+        setPortableInstallerUrl(
+          resolvePortableInstallerUrl(update.rawJson, platform(), arch()),
+        );
       } else {
         setUpdateAvailable(false);
 
@@ -223,6 +236,10 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
   const isUpdateClickable =
     !isUpdateDisabled && (updateAvailable || (!isChecking && !showUpToDate));
 
+  // When no installer could be resolved for this target the button falls back to
+  // the releases index, so the dialog has to say "browse" rather than "download".
+  const hasDirectInstaller = portableInstallerUrl !== PORTABLE_RELEASES_URL;
+
   return (
     <>
       {showPortableUpdateDialog && (
@@ -232,7 +249,9 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
               {t("footer.portableUpdateTitle")}
             </h2>
             <p className="text-sm text-text/70">
-              {t("footer.portableUpdateMessage")}
+              {hasDirectInstaller
+                ? t("footer.portableUpdateMessage")
+                : t("footer.portableUpdateBrowseMessage")}
             </p>
             <div className="flex gap-2 justify-end">
               <button
@@ -244,11 +263,13 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
               <button
                 className="px-3 py-1.5 text-sm rounded bg-logo-primary text-white hover:bg-logo-primary/80 transition-colors ease-apple"
                 onClick={() => {
-                  openUrl("https://github.com/cjpais/Handy/releases/latest");
+                  openUrl(portableInstallerUrl);
                   setShowPortableUpdateDialog(false);
                 }}
               >
-                {t("footer.portableUpdateButton")}
+                {hasDirectInstaller
+                  ? t("footer.portableUpdateButton")
+                  : t("footer.portableUpdateBrowseButton")}
               </button>
             </div>
           </div>
