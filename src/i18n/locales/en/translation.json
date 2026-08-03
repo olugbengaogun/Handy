@@ -17,7 +17,8 @@
     "history": "History",
     "insights": "Insights",
     "debug": "Debug",
-    "about": "About"
+    "about": "About",
+    "vocabulary": "Vocabulary"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -382,6 +383,10 @@
         "add": "Add",
         "remove": "Remove {{word}}",
         "duplicate": "\"{{word}}\" already has a correction"
+      },
+      "audioNormalization": {
+        "label": "Normalize quiet audio",
+        "description": "Lifts quiet recordings toward a usable level before transcription. Only boosts — audio that is already loud enough is left untouched."
       }
     },
     "postProcessing": {
@@ -594,6 +599,10 @@
         "verdictOk": "Key events are reaching Handy Plus normally.",
         "verdictNoEvents": "No events captured — did you press any keys during the test?",
         "failed": "Diagnostic failed: {{error}}"
+      },
+      "doubleMetaphoneMatching": {
+        "label": "Double Metaphone matching",
+        "description": "Use Double Metaphone instead of Soundex to match custom words by sound. More accurate on names, but it changes which words clear the correction threshold — measure before leaving it on."
       }
     },
     "about": {
@@ -632,6 +641,37 @@
           "description": "High-performance tensor library for on-device machine learning inference",
           "details": "Handy Plus's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
+      }
+    },
+    "vocabulary": {
+      "loading": "Loading...",
+      "timesFixed_one": "fixed 1 time",
+      "timesFixed_other": "fixed {{count}} times",
+      "suggestions": {
+        "title": "Suggested corrections",
+        "description": "Corrections you have made more than once. Accepting one applies it automatically from now on.",
+        "empty": "Nothing yet. When you fix a transcript in History and the same fix comes up again, it will appear here ready to accept.",
+        "accept": "Accept",
+        "dismiss": "Dismiss",
+        "acceptLabel": "Always correct {{before}} to {{after}}",
+        "dismissLabel": "Never suggest correcting {{before}} to {{after}}"
+      },
+      "candidates": {
+        "title": "Words you use often",
+        "description": "Names and terms found in your past transcripts. Adding one tells the model to listen for it.",
+        "empty": "Nothing to suggest yet — this fills in as you dictate.",
+        "add": "Add",
+        "addLabel": "Add {{term}} to the dictionary",
+        "timesSeen_one": "seen 1 time",
+        "timesSeen_other": "seen {{count}} times"
+      },
+      "dictionary": {
+        "title": "Your dictionary",
+        "description": "Corrections applied to every transcription."
+      },
+      "words": {
+        "title": "Custom words",
+        "description": "Words and names to listen for."
       }
     }
   },

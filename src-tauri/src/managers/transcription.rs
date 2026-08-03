@@ -1,4 +1,8 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
+use crate::audio_toolkit::{
+    apply_correction_pairs_tracked, apply_custom_words_with, apply_outside_protected,
+    build_whisper_initial_prompt, filter_transcription_output, normalize_for_transcription,
+    WhisperPrompt,
+};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -1148,6 +1152,15 @@ impl TranscriptionManager {
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
 
+        // Lift quiet recordings toward a usable level before the model sees
+        // them. Boost-only and gain-capped, so a healthy signal passes through
+        // untouched — see `audio_toolkit::audio::normalize`.
+        let audio = if settings.audio_normalization {
+            normalize_for_transcription(audio)
+        } else {
+            audio
+        };
+
         // Validate selected language against the model's supported languages.
         // If the language isn't supported, fall back to "auto" to prevent errors.
         // Validate against the model that's actually loaded (which can differ
@@ -1176,6 +1189,14 @@ impl TranscriptionManager {
         // with INVALID_ARG, so the whisper extension must be gated on the
         // arch, not on the feature (see #1601).
         let mut model_is_whisper = false;
+
+        // Set below once the dictionary has been fitted to Whisper's prompt
+        // budget. True only when a prompt was sent AND nothing was truncated
+        // away, because a dropped term never reached the decoder and so still
+        // needs the fuzzy post-correction pass. Declared out here (deferred
+        // initialization, so there is no dead initial value) because it outlives
+        // the engine block and is read by the post-processing call.
+        let whisper_prompt_covered_dictionary;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1226,6 +1247,32 @@ impl TranscriptionManager {
                 );
             }
 
+            // Fit the dictionary into Whisper's prompt budget up front. Whisper
+            // reads only the last 224 tokens of an initial prompt and silently
+            // discards the rest, so an unbounded `join(", ")` quietly stops
+            // delivering the user's earliest terms once the list grows. Computed
+            // here rather than inside the closure below so the truncation result
+            // is visible to the post-processing decision further down.
+            let whisper_prompt = if model_is_whisper {
+                build_whisper_initial_prompt(&settings.effective_custom_words())
+            } else {
+                WhisperPrompt::default()
+            };
+            if whisper_prompt.dropped > 0 {
+                warn!(
+                    "Whisper prompt budget reached: {} of {} dictionary terms sent to the decoder, \
+                     {} dropped. The dropped terms fall back to fuzzy post-correction.",
+                    whisper_prompt.included,
+                    whisper_prompt.included + whisper_prompt.dropped,
+                    whisper_prompt.dropped
+                );
+            }
+            // Only claim the prompt covered the dictionary when nothing was
+            // dropped. If terms were truncated away they never reached the
+            // decoder, so the fuzzy post-correction pass must still run for them.
+            whisper_prompt_covered_dictionary =
+                whisper_prompt.text.is_some() && whisper_prompt.dropped == 0;
+
             let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
                 match &mut engine {
                     LoadedEngine::TranscribeCpp(session) => {
@@ -1234,15 +1281,12 @@ impl TranscriptionManager {
                         // whisper run extension to a non-whisper arch is rejected
                         // with INVALID_ARG, so skip it there and let the fuzzy
                         // post-correction handle custom words instead.
-                        let effective_custom_words = settings.effective_custom_words();
-                        let family = if effective_custom_words.is_empty() || !model_is_whisper {
-                            None
-                        } else {
-                            Some(RunExtension::Whisper(WhisperRunOptions {
-                                initial_prompt: Some(effective_custom_words.join(", ")),
+                        let family = whisper_prompt.text.clone().map(|initial_prompt| {
+                            RunExtension::Whisper(WhisperRunOptions {
+                                initial_prompt: Some(initial_prompt),
                                 ..Default::default()
-                            }))
-                        };
+                            })
+                        });
 
                         let run_plan = transcribe_cpp_run_plan(
                             settings.translate_to_english,
@@ -1396,8 +1440,11 @@ impl TranscriptionManager {
         // words were already handed to the model as an initial prompt (whisper
         // family). We don't pass a prompt to non-whisper models (it requires the
         // whisper-kind run extension), so they still get fuzzy correction here,
-        // same as the ONNX engines.
-        let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
+        // same as the ONNX engines. A whisper prompt that had to be truncated
+        // does NOT count as covering the dictionary — the terms it dropped never
+        // reached the decoder, so they fall through to fuzzy correction.
+        let filtered_result =
+            post_process_transcription_text(result, &settings, whisper_prompt_covered_dictionary);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1610,15 +1657,36 @@ fn post_process_transcription_text(
     custom_words_already_prompted: bool,
 ) -> String {
     fail_open_text_transform(raw, |raw| {
+        // Deterministic, user-taught corrections run first and unconditionally.
+        // Unlike the fuzzy pass below they are an explicit instruction from the
+        // user, so they apply even when the model already received the custom
+        // words as a decode prompt — a prompt only *biases* the decoder, it does
+        // not guarantee the spelling the user asked for.
+        let pairs = apply_correction_pairs_tracked(
+            &raw,
+            settings
+                .correction_pairs
+                .iter()
+                .map(|p| (p.wrong.as_str(), p.correct.as_str())),
+        );
+
         let effective_custom_words = settings.effective_custom_words();
         let corrected = if !effective_custom_words.is_empty() && !custom_words_already_prompted {
-            apply_custom_words(
-                &raw,
-                &effective_custom_words,
-                settings.word_correction_threshold,
-            )
+            // Fuzzy matching is deliberately kept away from spans the user
+            // spelled out by hand. A deterministic replacement creates word
+            // adjacencies that never existed in the raw transcription, and the
+            // 1–3-word n-gram matcher would otherwise score those new n-grams
+            // against its dictionary and could rewrite them.
+            apply_outside_protected(&pairs.text, &pairs.protected, |segment| {
+                apply_custom_words_with(
+                    segment,
+                    &effective_custom_words,
+                    settings.word_correction_threshold,
+                    settings.double_metaphone_matching,
+                )
+            })
         } else {
-            raw
+            pairs.text
         };
 
         filter_transcription_output(

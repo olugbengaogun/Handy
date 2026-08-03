@@ -81,6 +81,7 @@ fn find_best_match<'a>(
     custom_words: &'a [String],
     custom_word_match_keys: &[CustomWordMatchKey],
     threshold: f64,
+    double_metaphone: bool,
 ) -> Option<(&'a String, f64)> {
     if !is_supported_fuzzy_key(candidate) || candidate.chars().count() > 50 {
         return None;
@@ -110,18 +111,29 @@ fn find_best_match<'a>(
             1.0
         };
 
-        // Soundex is an English/ASCII phonetic algorithm. Numeric terms can
-        // still use edit distance, but must not receive a phonetic boost.
-        let phonetic_match = supports_soundex(candidate)
+        // Combine scores: favor phonetic matches, but also consider string
+        // similarity. Both algorithms are English/ASCII; numeric terms can still
+        // use edit distance, but must not receive a phonetic boost.
+        //
+        // Double Metaphone is opt-in because it changes *which* pairs count as
+        // phonetically related, and `threshold` was tuned against Soundex. A
+        // pair both algorithms agree on scores identically either way — see
+        // `super::phonetic`.
+        let phonetic_multiplier = if double_metaphone {
+            super::phonetic::score_multiplier(super::phonetic::agreement(
+                candidate,
+                &custom_word_key.key,
+            ))
+        } else if supports_soundex(candidate)
             && supports_soundex(&custom_word_key.key)
-            && soundex(candidate, &custom_word_key.key);
-
-        // Combine scores: favor phonetic matches, but also consider string similarity
-        let combined_score = if phonetic_match {
-            levenshtein_score * 0.3 // Give significant boost to phonetic matches
+            && soundex(candidate, &custom_word_key.key)
+        {
+            0.3 // Give significant boost to phonetic matches
         } else {
-            levenshtein_score
+            1.0
         };
+
+        let combined_score = levenshtein_score * phonetic_multiplier;
 
         // Accept if the score is good enough (configurable threshold)
         if combined_score < threshold && combined_score < best_score {
@@ -149,6 +161,20 @@ fn find_best_match<'a>(
 /// # Returns
 /// The corrected text with custom words applied
 pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -> String {
+    apply_custom_words_with(text, custom_words, threshold, false)
+}
+
+/// [`apply_custom_words`] with the phonetic algorithm selectable.
+///
+/// `double_metaphone = false` reproduces the original Soundex behaviour exactly,
+/// which is why the three-argument form above still exists and still delegates
+/// here: existing callers and tests are unaffected by the addition.
+pub fn apply_custom_words_with(
+    text: &str,
+    custom_words: &[String],
+    threshold: f64,
+    double_metaphone: bool,
+) -> String {
     if custom_words.is_empty() {
         return text.to_string();
     }
@@ -187,9 +213,13 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
             }
             let ngram = build_ngram(ngram_words);
 
-            if let Some((replacement, score)) =
-                find_best_match(&ngram, custom_words, &custom_word_match_keys, threshold)
-            {
+            if let Some((replacement, score)) = find_best_match(
+                &ngram,
+                custom_words,
+                &custom_word_match_keys,
+                threshold,
+                double_metaphone,
+            ) {
                 let is_better = best_match
                     .as_ref()
                     .is_none_or(|(_, _, best_score)| score < *best_score);

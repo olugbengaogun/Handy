@@ -2,8 +2,6 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { ShowOverlay } from "../ShowOverlay";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
-import { CustomWords } from "../CustomWords";
-import { CorrectionPairs } from "../CorrectionPairs";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { StartHidden } from "../StartHidden";
 import { AutostartToggle } from "../AutostartToggle";
@@ -14,6 +12,7 @@ import { ClipboardHandlingSetting } from "../ClipboardHandling";
 import { AutoSubmit } from "../AutoSubmit";
 import { PostProcessingToggle } from "../PostProcessingToggle";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
+import { AudioNormalization } from "../AudioNormalization";
 import { HistoryLimit } from "../HistoryLimit";
 import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { KeepAudioRecordings } from "../KeepAudioRecordings";
@@ -49,9 +48,8 @@ export const AdvancedSettings: React.FC = () => {
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
-        <CustomWords descriptionMode="tooltip" grouped />
-        <CorrectionPairs descriptionMode="tooltip" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
+        <AudioNormalization descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.history")}>

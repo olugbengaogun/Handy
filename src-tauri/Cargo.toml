@@ -63,6 +63,12 @@ futures-util = "0.3"
 rustfft = "6.4.0"
 strsim = "0.11.0"
 natural = "0.5.0"
+# Double Metaphone for custom-word matching. `natural`'s Soundex drops all
+# vowels and truncates to four characters (a 1918 census algorithm); Double
+# Metaphone models far more of English pronunciation and returns a primary and
+# an alternate code, which matters for exactly the proper nouns and product
+# names the custom-word feature exists for. Opt-in — see `audio_toolkit::phonetic`.
+rphonetic = "3.0.6"
 regex = "1"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }

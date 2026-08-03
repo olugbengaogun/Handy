@@ -455,17 +455,42 @@ pub(crate) async fn process_transcription_output(
 
     if post_process {
         if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
-            post_processed_text = Some(processed_text.clone());
-            final_text = processed_text;
+            // Divergence guard. LLM post-processing is the only stage that can
+            // invent text, and whatever it returns gets pasted into whatever the
+            // user had focused. A confused model, a bad custom prompt, or an
+            // instruction embedded in the speech itself can all turn "tidy this
+            // up" into "answer this" or "summarise this". Reject a result that
+            // strays too far from what was actually said and keep the raw
+            // transcription — a slightly untidy transcript beats a fabricated
+            // one. Case and punctuation changes are normalised away first, since
+            // fixing those is exactly what cleanup is supposed to do.
+            if crate::audio_toolkit::is_plausible_cleanup(
+                &final_text,
+                &processed_text,
+                crate::audio_toolkit::DEFAULT_MAX_DIVERGENCE,
+            ) {
+                post_processed_text = Some(processed_text.clone());
+                final_text = processed_text;
 
-            if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                if let Some(prompt) = settings
-                    .post_process_prompts
-                    .iter()
-                    .find(|prompt| &prompt.id == prompt_id)
-                {
-                    post_process_prompt = Some(prompt.prompt.clone());
+                // Recorded only on the accepted path: a history row showing a
+                // prompt but no post-processed text would misrepresent what
+                // actually reached the user.
+                if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
+                    if let Some(prompt) = settings
+                        .post_process_prompts
+                        .iter()
+                        .find(|prompt| &prompt.id == prompt_id)
+                    {
+                        post_process_prompt = Some(prompt.prompt.clone());
+                    }
                 }
+            } else {
+                warn!(
+                    "Post-processing output diverged too far from the transcription \
+                     ({} chars in, {} chars out); keeping the raw transcription.",
+                    final_text.len(),
+                    processed_text.len()
+                );
             }
         }
     } else if final_text != transcription {

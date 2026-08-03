@@ -467,6 +467,18 @@ pub struct AppSettings {
     pub external_script_path: Option<String>,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
+    /// Lift quiet recordings toward a usable level before transcription.
+    /// Boost-only and gain-capped, so healthy audio is passed through
+    /// untouched — see `audio_toolkit::audio::normalize`.
+    #[serde(default = "default_audio_normalization")]
+    pub audio_normalization: bool,
+    /// Use Double Metaphone instead of Soundex for custom-word matching.
+    ///
+    /// Off by default: it changes which candidates clear
+    /// `word_correction_threshold`, and that threshold was tuned against
+    /// Soundex. Enable it after measuring with `scripts/wer-bench.ts`.
+    #[serde(default)]
+    pub double_metaphone_matching: bool,
     #[serde(default)]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
@@ -559,6 +571,12 @@ fn default_log_level() -> LogLevel {
 
 fn default_word_correction_threshold() -> f64 {
     0.18
+}
+
+/// Audio normalisation defaults on: it only boosts quiet input and never
+/// attenuates, so the worst case for a well-configured microphone is no change.
+fn default_audio_normalization() -> bool {
+    true
 }
 
 fn default_paste_delay_ms() -> u64 {
@@ -913,6 +931,8 @@ pub fn get_default_settings() -> AppSettings {
         typing_tool: default_typing_tool(),
         external_script_path: None,
         custom_filler_words: None,
+        audio_normalization: default_audio_normalization(),
+        double_metaphone_matching: false,
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),

@@ -211,13 +211,58 @@ pub async fn update_history_transcription(
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("History entry {} not found", id))?;
 
+    let original = entry.transcription_text.clone();
+
     history_manager
         .update_transcription(
             id,
-            text,
+            text.clone(),
             entry.post_processed_text,
             entry.post_process_prompt,
         )
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Learn from the correction. This is the whole point of the learning loop:
+    // a hand-edit is the clearest signal the app ever gets about how this
+    // particular person speaks, and it costs no audio to capture.
+    //
+    // Deliberately best-effort and *after* the update has already succeeded —
+    // the user's edit is the operation they asked for, and no failure in an
+    // optional learning step may be allowed to fail it or lose their text.
+    record_correction_for_learning(&_app, id, &original, &text);
+
+    Ok(())
+}
+
+/// Record what changed between the stored transcript and the user's edit.
+///
+/// Errors are logged and swallowed on purpose — see the call site. The manager
+/// is constructed on demand rather than held in Tauri state because it owns
+/// nothing but a path; the schema itself is created by `HistoryManager`'s
+/// migrations, which have already run by the time any command can be invoked.
+fn record_correction_for_learning(app: &AppHandle, id: i64, original: &str, edited: &str) {
+    if original == edited {
+        return;
+    }
+
+    let settings = crate::settings::get_settings(app);
+    let manager = match crate::managers::learning::LearningManager::new(app) {
+        Ok(manager) => manager,
+        Err(e) => {
+            log::warn!("Learning loop unavailable: {e}");
+            return;
+        }
+    };
+
+    match manager.record_edit(
+        Some(id),
+        original,
+        edited,
+        Some(&settings.selected_model),
+        Some(&settings.selected_language),
+    ) {
+        Ok(0) => {}
+        Ok(n) => log::debug!("Learning loop captured {n} correction(s) from history edit {id}"),
+        Err(e) => log::warn!("Failed to record learning events for entry {id}: {e}"),
+    }
 }

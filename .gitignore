@@ -46,3 +46,7 @@ result
 
 # Python bytecode (scripts/)
 __pycache__/
+
+# Internal working documents — planning, self-critique, roadmap.
+# The design rationale that matters lives in code comments; these are notes.
+ACCURACY_PLAN.md

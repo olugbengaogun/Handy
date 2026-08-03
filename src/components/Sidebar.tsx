@@ -6,6 +6,7 @@ import {
   History,
   Info,
   Sparkles,
+  GraduationCap,
   Cpu,
   BarChart3,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
   AdvancedSettings,
   HistorySettings,
   InsightsSettings,
+  VocabularySettings,
   DebugSettings,
   AboutSettings,
   PostProcessingSettings,
@@ -51,6 +53,12 @@ export const SECTIONS_CONFIG = {
     labelKey: "sidebar.history",
     icon: History,
     component: HistorySettings,
+    enabled: () => true,
+  },
+  vocabulary: {
+    labelKey: "sidebar.vocabulary",
+    icon: GraduationCap,
+    component: VocabularySettings,
     enabled: () => true,
   },
   insights: {

@@ -34,6 +34,35 @@ static MIGRATIONS: &[M] = &[
     M::up("ALTER TABLE transcription_history ADD COLUMN has_audio BOOLEAN NOT NULL DEFAULT 1;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN word_count INTEGER NOT NULL DEFAULT 0;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN duration_secs REAL NOT NULL DEFAULT 0;"),
+    // Learning loop (see `managers::learning`). Purely additive: a new table
+    // plus two nullable columns, so an existing database upgrades in place and
+    // every pre-existing query keeps working untouched. The columns record
+    // which model and language produced a transcript, without which a learned
+    // correction cannot be attributed — a rule taught under one model may be
+    // wrong for another.
+    M::up(
+        "CREATE TABLE IF NOT EXISTS learning_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            history_id INTEGER,
+            first_seen INTEGER NOT NULL,
+            last_seen INTEGER NOT NULL,
+            before_text TEXT NOT NULL,
+            after_text TEXT NOT NULL,
+            before_key TEXT NOT NULL,
+            after_key TEXT NOT NULL,
+            edit_kind TEXT NOT NULL,
+            model_id TEXT,
+            language TEXT,
+            occurrences INTEGER NOT NULL DEFAULT 1,
+            status TEXT NOT NULL DEFAULT 'pending'
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_learning_events_key
+            ON learning_events (before_key, after_key);
+        CREATE INDEX IF NOT EXISTS idx_learning_events_status
+            ON learning_events (status, occurrences DESC);",
+    ),
+    M::up("ALTER TABLE transcription_history ADD COLUMN model_id TEXT;"),
+    M::up("ALTER TABLE transcription_history ADD COLUMN language TEXT;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]

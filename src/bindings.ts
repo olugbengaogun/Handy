@@ -832,14 +832,6 @@ async searchHistoryEntries(query: string, cursor: number | null, limit: number |
     else return { status: "error", error: e  as any };
 }
 },
-async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_usage_stats", { range }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async toggleHistoryEntrySaved(id: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("toggle_history_entry_saved", { id }) };
@@ -872,14 +864,6 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
-async updateHistoryTranscription(id: number, text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_history_transcription", { id, text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async updateHistoryLimit(limit: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("update_history_limit", { limit }) };
@@ -905,10 +889,132 @@ async updateKeepAudioRecordings(keep: boolean) : Promise<Result<null, string>> {
 }
 },
 /**
- * Checks if the Mac is a laptop by detecting battery presence
+ * Lets the user manually correct a saved transcript (e.g. fixing a misheard
+ * name), independent of retry/re-transcription. Reuses the existing
+ * `HistoryManager::update_transcription`, previously only called internally
+ * by retry.
+ */
+async updateHistoryTranscription(id: number, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_history_transcription", { id, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_usage_stats", { range }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Corrections the user has made often enough to be worth offering as rules.
+ */
+async getLearningSuggestions(minOccurrences: number | null) : Promise<Result<LearningSuggestion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learning_suggestions", { minOccurrences }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Corrections the user has already promoted into the dictionary.
  * 
- * This uses pmset to check for battery information.
- * Returns true if a battery is detected (laptop), false otherwise (desktop)
+ * Cross-checked against the dictionary itself rather than trusted from the
+ * learning table alone: a pair can also be deleted directly from the Advanced
+ * settings, and listing a "learned rule" that no longer exists would be a lie
+ * the user cannot act on.
+ */
+async getLearnedRules() : Promise<Result<LearningSuggestion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_learned_rules") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Accept a suggestion: add it to `correction_pairs` and mark it active.
+ * 
+ * The settings write happens **before** the status flip. If the order were
+ * reversed and the write failed, the suggestion would be marked active while no
+ * rule existed — it would never be offered again and never do anything, which
+ * is the one outcome the user could not recover from through the UI.
+ */
+async promoteLearningSuggestion(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("promote_learning_suggestion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Refuse a suggestion. It keeps accumulating occurrences so the history stays
+ * honest, but it is never offered again — re-asking about something the user
+ * already declined is how a helpful feature becomes a nag.
+ */
+async dismissLearningSuggestion(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("dismiss_learning_suggestion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Undo a promotion: drop the pair from the dictionary and return the
+ * suggestion to `pending`.
+ * 
+ * Returned to pending rather than dismissed on purpose. Removing a rule says
+ * "this is not right *yet*", not "never ask me again" — if the same correction
+ * keeps recurring, the user should get the chance to reconsider. Dismissing is
+ * the separate, explicit way to silence something for good.
+ */
+async demoteLearningSuggestion(id: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("demote_learning_suggestion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recurring proper nouns mined from the user's own past transcripts.
+ * 
+ * Solves cold start: the reactive loop needs a correction to happen twice
+ * before it can offer anything, but the terms most worth knowing are wrong from
+ * the very first dictation. These are only ever *suggestions* — they come from
+ * model output, so a consistently mis-heard name is mined in its mis-heard
+ * form, and adding one automatically would teach the app to reinforce its own
+ * mistake.
+ */
+async getDictionaryCandidates() : Promise<Result<TermSuggestion[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_dictionary_candidates") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Add a mined term to the custom-word dictionary.
+ */
+async acceptDictionaryCandidate(term: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("accept_dictionary_candidate", { term }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stub implementation for non-macOS platforms
+ * Always returns false since laptop detection is macOS-specific
  */
 async isLaptop() : Promise<Result<boolean, string>> {
     try {
@@ -964,13 +1070,27 @@ bindings?: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk?: boolean
  * upgrading from before this key existed are blanked by the migration so they
  * see the current release's notes — see `apply_settings_migrations`.
  */
-whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; keep_audio_recordings?: boolean; correction_pairs?: CorrectionPair[]; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number;
+whats_new_last_seen_version?: string; selected_model?: string; onboarding_completed?: boolean; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; keep_audio_recordings?: boolean; correction_pairs?: CorrectionPair[]; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; theme?: Theme; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
+reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; 
+/**
+ * Lift quiet recordings toward a usable level before transcription.
+ * Boost-only and gain-capped, so healthy audio is passed through
+ * untouched — see `audio_toolkit::audio::normalize`.
+ */
+audio_normalization?: boolean; 
+/**
+ * Use Double Metaphone instead of Soundex for custom-word matching.
+ * 
+ * Off by default: it changes which candidates clear
+ * `word_correction_threshold`, and that threshold was tuned against
+ * Soundex. Enable it after measuring with `scripts/wer-bench.ts`.
+ */
+double_metaphone_matching?: boolean; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; vad_enabled?: boolean; 
 /**
  * Which recording overlay to show: None / Minimal / Live. Streaming mode is
  * not gated on this — that follows model capability. Migrated from the old
@@ -982,6 +1102,12 @@ export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * A personal-dictionary correction: text the user was mis-transcribed as
+ * (`wrong`) mapped to what it should have been (`correct`). Fed into the same
+ * fuzzy custom-word matching pipeline as `custom_words`.
+ */
+export type CorrectionPair = { wrong: string; correct: string }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type EngineType = 
 /**
@@ -1008,8 +1134,26 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
-
-export type CorrectionPair = { wrong: string; correct: string }
+/**
+ * A correction the user has made often enough to be worth offering as a rule.
+ */
+export type LearningSuggestion = { id: number; 
+/**
+ * What the model produced.
+ */
+before: string; 
+/**
+ * What the user changed it to.
+ */
+after: string; 
+/**
+ * Stable kind identifier — see [`EditKind::as_str`].
+ */
+kind: string; 
+/**
+ * Whether this teaches vocabulary (dictionary) rather than style.
+ */
+is_vocabulary: boolean; occurrences: number; last_seen: number }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
@@ -1048,10 +1192,6 @@ export type OverlayPosition = "top" | "bottom"
  */
 export type OverlayStyle = "none" | "minimal" | "live"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
-
-export type StatsRange = "week" | "month" | "all_time"
-
-export type UsageStats = { total_words: number; total_entries: number; total_duration_secs: number; average_wpm: number }
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean }
@@ -1091,6 +1231,7 @@ uncovered_bindings: string[];
 recorder_blocked: boolean }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type StatsRange = "week" | "month" | "all_time"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -1124,12 +1265,17 @@ export type StreamTextEvent = { committed: string; tentative: string }
  */
 export type StreamWorkKind = "transcribing" | "polishing"
 /**
+ * A term mined from past transcripts, offered for the dictionary.
+ */
+export type TermSuggestion = { term: string; occurrences: number }
+/**
  * UI appearance mode. `System` follows the OS `prefers-color-scheme`; `Light`
  * and `Dark` force one of the two palettes Handy already ships.
  */
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+export type UsageStats = { total_words: number; total_entries: number; total_duration_secs: number; average_wpm: number }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

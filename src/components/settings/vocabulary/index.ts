@@ -1,0 +1,1 @@
+export { VocabularySettings } from "./VocabularySettings";
