@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # Tags are needed by the version guard below; the default shallow
+          # checkout has none, which would make every release look like the first.
+          fetch-depth: 0
 
       - name: Get version from tauri.conf.json
         id: get-version
@@ -28,6 +32,58 @@ jobs:
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version from tauri.conf.json: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Refuse to cut a release that is not newer than what is already published.
+      #
+      # This fork's version number is not chosen by hand alone: the daily
+      # upstream sync bumps it whenever CJ publishes his own release. So a
+      # working copy that has not been pulled recently will show a version that
+      # is already behind what shipped, and a release cut from it would either
+      # collide with an existing tag or quietly ship users a build older than
+      # the one they are running. Comparing against the real tag list is the
+      # only source of truth; a person's memory of "what version are we on" is
+      # not, and that is precisely the mistake this guard exists to make
+      # impossible.
+      - name: Verify version is newer than the latest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.get-version.outputs.version }}"
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read a version from src-tauri/tauri.conf.json"
+            exit 1
+          fi
+
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Tag v$VERSION already exists. Bump the version before releasing."
+            exit 1
+          fi
+
+          # Highest existing vX.Y.Z tag, ignoring anything non-numeric.
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sed 's/^v//' \
+            | sort -V \
+            | tail -n1)
+
+          if [ -z "$LATEST" ]; then
+            echo "No previous release tags found; treating v$VERSION as the first."
+            exit 0
+          fi
+
+          echo "Latest published: v$LATEST"
+          echo "About to release:  v$VERSION"
+
+          # `sort -V | tail -1` picks the higher of the two. If that is the
+          # already-published one, this release would be a downgrade.
+          HIGHEST=$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -n1)
+          if [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::v$VERSION is not newer than the published v$LATEST."
+            echo "::error::Pull the latest main (the upstream sync may have bumped the version) and pick a higher number."
+            exit 1
+          fi
+
+          echo "Version check passed."
 
       - name: Create Draft Release
         id: create-release
