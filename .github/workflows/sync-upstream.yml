@@ -294,10 +294,71 @@ jobs:
               echo "No tag v$CURRENT - falling back to this sync's merge range."
               RANGE="$BEFORE..HEAD"
             fi
+            # These notes are shipped inside the app: releaseNotes.ts bundles
+            # this directory with import.meta.glob and the What's New dialog
+            # shows it on first launch after an update. So it is read by
+            # users, not developers, and a commit subject is the wrong unit
+            # of text entirely - "move blocking cpal work off the main
+            # thread + lock-free is_recording" is accurate, useful to CJ, and
+            # meaningless to someone who just wanted dictation.
+            #
+            # No regex turns developer shorthand into prose, so this does not
+            # try. Every word that reaches a user comes from the fixed table
+            # below; commit subjects are only ever *matched* against it,
+            # never echoed. That is what makes gibberish structurally
+            # impossible here rather than merely unlikely. When a release
+            # deserves real prose, write the file by hand and the block above
+            # leaves it alone.
+            SUBJECTS=$(git log --no-merges --pretty='%s' "$RANGE" || true)
+
+            # Housekeeping and other-platform work, dropped before anything
+            # is counted. This fork publishes exactly one target - see the
+            # single-entry matrix in release.yml - so a Windows registry fix
+            # is noise to every single person who will read this. Default is
+            # to keep: a line only goes if it clearly matches, because an
+            # omitted fix is a worse failure than an untidy one.
+            RELEVANT=$(printf '%s\n' "$SUBJECTS" \
+              | grep -Ev '^(ci|chore|docs|test|build|style|refactor)(\([^)]*\))?!?: ' \
+              | grep -Ev '^[a-z]+\((nix|ci|deps|release|workflow)\)!?: ' \
+              | grep -Eiv '^(pr|issue) template' \
+              | awk '/[Ww]indows|[Ll]inux|[Ww]ayland|AppImage/ &&
+                     !/[Mm]ac|[Dd]arwin|[Aa]pple|[Cc]ore[Aa]udio/ { next }
+                     { print }' \
+              || true)
+
+            # Conventional-commit scope -> plain English. Anything not on
+            # this list is silently ignored, so an unrecognised scope can
+            # never leak a raw token like "nix" into the dialog.
+            AREAS=$(printf '%s\n' "$RELEVANT" \
+              | sed -nE 's/^[a-z]+\(([a-z0-9_-]+)\)!?:.*/\1/p' \
+              | sort -u \
+              | while read -r scope; do
+                  case "$scope" in
+                    audio|recorder|mic|microphone|vad) echo "Audio recording" ;;
+                    overlay)                           echo "The recording overlay" ;;
+                    transcription|whisper|parakeet|model|models) echo "Transcription" ;;
+                    history)                           echo "History" ;;
+                    settings|ui|onboarding|i18n)       echo "The interface" ;;
+                    paste|clipboard|output)            echo "Pasting text" ;;
+                    shortcut|shortcuts|hotkey)         echo "Keyboard shortcuts" ;;
+                    llm|post-process|postprocess)      echo "Post-processing" ;;
+                    updater|update)                    echo "Updates" ;;
+                  esac
+                done | sort -u || true)
+
             {
               echo "## What's new in $NEW"
               echo
-              git log --no-merges --pretty='- %s' "$RANGE" | head -50
+              echo "This is a maintenance update. It brings the latest fixes from the"
+              echo "upstream Handy project into Handy Plus."
+              if [ -n "$AREAS" ]; then
+                echo
+                echo "Areas improved in this release:"
+                echo
+                printf '%s\n' "$AREAS" | sed 's/^/- /'
+              fi
+              echo
+              echo "Handy Plus updates itself, so there is nothing you need to do."
             } > "$NOTES"
             echo "Wrote $NOTES from $RANGE"
           fi
