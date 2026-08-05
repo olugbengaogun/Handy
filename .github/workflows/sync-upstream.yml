@@ -44,6 +44,17 @@ jobs:
         with:
           fetch-depth: 0
           ref: main
+          # GitHub refuses any push from the built-in GITHUB_TOKEN that
+          # touches .github/workflows/ — a platform rule with no permission
+          # flag to unlock it. Upstream edits its own CI often enough
+          # (838f8a2 "feat(nix): add Cachix binary cache" killed the
+          # 2026-08-05 sync) that the whole sync dies on those days. SYNC_PAT
+          # is a fine-grained PAT with Workflows: read/write. The fallback
+          # keeps this working exactly as before if the secret is absent —
+          # every sync that does not carry a workflow-file change still
+          # lands.
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          persist-credentials: true
 
       - name: Configure git identity
         run: |
@@ -184,7 +195,7 @@ jobs:
         if: steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
           BEFORE: ${{ steps.merge.outputs.before }}
         run: |
           set -euo pipefail
@@ -301,7 +312,19 @@ jobs:
             src-tauri/Cargo.toml \
             src-tauri/Cargo.lock \
             "$NOTES"
-          git commit -m "chore: release v$NEW (automated upstream sync)"
+          # `[skip ci]` keeps CI behaviour exactly as it was before this job
+          # started pushing with a PAT. Pushes made with the built-in
+          # GITHUB_TOKEN never trigger `on: push` workflows; PAT pushes do -
+          # so without this, every sync would suddenly fire main-build (a
+          # six-platform matrix), code-quality and test, on top of the
+          # six-platform release build dispatched two lines below. Two full
+          # matrix builds of the same commit, daily, for no added signal:
+          # this job already ran `bun run build` and `cargo test` on the
+          # merged tree, and release.yml rebuilds every platform immediately.
+          # Only push-triggered runs are skipped; the workflow_dispatch below
+          # is unaffected, and the PR path deliberately omits this so a sync
+          # that needs human review still gets full CI.
+          git commit -m "chore: release v$NEW (automated upstream sync) [skip ci]"
           git push origin HEAD:main
 
           # --ref must be a branch or tag name; the API rejects a raw SHA, so
@@ -312,7 +335,7 @@ jobs:
       - name: Push a branch and open a PR for review
         if: steps.merge.outputs.status == 'conflict' || (steps.merge.outputs.status == 'merged' && steps.test.outputs.pass == 'false')
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
         run: |
           REASON="merge conflict"
           if [ "${{ steps.merge.outputs.status }}" == "merged" ]; then
