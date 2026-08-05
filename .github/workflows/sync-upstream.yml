@@ -346,19 +346,25 @@ jobs:
                   esac
                 done | sort -u || true)
 
+            # "Maintenance update" is a claim, and it is false the moment
+            # upstream ships an actual feature - so it is only made when the
+            # commits back it up.
+            if printf '%s\n' "$RELEVANT" | grep -qE '^feat(\([^)]*\))?!?: '; then
+              LEAD="This update brings new improvements from the upstream Handy project into Handy Plus."
+            else
+              LEAD="This is a maintenance update, bringing the latest fixes from the upstream Handy project into Handy Plus."
+            fi
+
             {
               echo "## What's new in $NEW"
               echo
-              echo "This is a maintenance update. It brings the latest fixes from the"
-              echo "upstream Handy project into Handy Plus."
+              echo "$LEAD"
               if [ -n "$AREAS" ]; then
                 echo
                 echo "Areas improved in this release:"
                 echo
                 printf '%s\n' "$AREAS" | sed 's/^/- /'
               fi
-              echo
-              echo "Handy Plus updates itself, so there is nothing you need to do."
             } > "$NOTES"
             echo "Wrote $NOTES from $RANGE"
           fi
