@@ -379,18 +379,17 @@ jobs:
             src-tauri/Cargo.toml \
             src-tauri/Cargo.lock \
             "$NOTES"
-          # `[skip ci]` keeps CI behaviour exactly as it was before this job
+          # The skip-ci marker keeps CI behaving as it did before this job
           # started pushing with a PAT. Pushes made with the built-in
           # GITHUB_TOKEN never trigger `on: push` workflows; PAT pushes do -
-          # so without this, every sync would suddenly fire main-build (a
-          # six-platform matrix), code-quality and test, on top of the
-          # six-platform release build dispatched two lines below. Two full
-          # matrix builds of the same commit, daily, for no added signal:
-          # this job already ran `bun run build` and `cargo test` on the
-          # merged tree, and release.yml rebuilds every platform immediately.
+          # so without it every sync would fire main-build, code-quality and
+          # test on top of the release build dispatched two lines below,
+          # building the same commit twice, daily, for no added signal. This
+          # job has already run `bun run build` and `cargo test` on the merged
+          # tree, and release.yml rebuilds the shipping target immediately.
           # Only push-triggered runs are skipped; the workflow_dispatch below
-          # is unaffected, and the PR path deliberately omits this so a sync
-          # that needs human review still gets full CI.
+          # is unaffected, and the PR path deliberately omits the marker so a
+          # sync that needs human review still gets full CI.
           git commit -m "chore: release v$NEW (automated upstream sync) [skip ci]"
           git push origin HEAD:main
 
