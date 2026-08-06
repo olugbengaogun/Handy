@@ -27,7 +27,9 @@
 //!
 //! Classification is what makes it safe to learn automatically at all.
 
-use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 /// Maximum words on either side before diffing is abandoned.
 ///
@@ -399,12 +401,6 @@ pub fn is_plausible_cleanup(original: &str, cleaned: &str, max_divergence: f64) 
         return false;
     }
 
-    // Guard the O(n × m) comparison on very long transcripts. Anything this
-    // large is accepted rather than stalling the paste.
-    if a.len() > MAX_WORDS || b.len() > MAX_WORDS {
-        return true;
-    }
-
     // Compare on lowercased, punctuation-stripped words. Fixing capitalisation
     // and punctuation is precisely what a cleanup pass is *for*, so charging
     // those against the divergence budget would reject the good case: tidying
@@ -427,9 +423,104 @@ pub fn is_plausible_cleanup(original: &str, cleaned: &str, max_divergence: f64) 
         return true;
     }
 
+    // The alignment below is O(n × m). On a transcript this long it would stall
+    // the paste, so a bounded linear-time check stands in for it — see
+    // [`is_plausible_long_cleanup`]. This used to `return true` outright, which
+    // meant the one stage that can invent text was unguarded on exactly the
+    // inputs where a runaway rewrite does the most damage.
+    if a.len() > MAX_WORDS || b.len() > MAX_WORDS {
+        return is_plausible_long_cleanup(&na, &nb, max_divergence);
+    }
+
     let distance = word_edit_distance(&na, &nb) as f64;
     let denominator = na.len().max(nb.len()) as f64;
     (distance / denominator) <= max_divergence
+}
+
+/// Words per shingle in the long-transcript guard.
+///
+/// Three is the smallest width that still carries word order. Single words
+/// would call a shuffled transcript unchanged; longer windows are broken by
+/// every removed filler, which would penalise exactly the edit cleanup exists
+/// to make.
+const SHINGLE_WORDS: usize = 3;
+
+/// Linear-time stand-in for [`is_plausible_cleanup`]'s alignment, for
+/// transcripts too long to align in front of a waiting paste.
+///
+/// Two independent checks, both of which must pass:
+///
+/// 1. **Length.** Cleanup removes fillers and adds punctuation; it does not
+///    change how much was said. A transcript that lost (or gained) more than
+///    the divergence budget in sheer word count is a summary or an expansion,
+///    not a tidy-up.
+/// 2. **Survival.** Enough of the original's three-word sequences must still be
+///    somewhere in the output. A model that went off and wrote its own prose
+///    keeps almost none of them.
+///
+/// The survival threshold is derived from `max_divergence` rather than picked,
+/// so the long path allows exactly what the exact path allows. If a fraction
+/// `d` of scattered words may change, each surviving shingle needs all
+/// [`SHINGLE_WORDS`] of its words to survive, so the expected survival rate is
+/// `(1 - d)^SHINGLE_WORDS`. Choosing a rounder-looking number instead would
+/// quietly make long transcripts stricter than short ones — punishing exactly
+/// the disfluent, filler-heavy speech that cleanup helps most.
+///
+/// Both inputs are the already-normalised (lowercased, punctuation-stripped)
+/// word lists, so casing and punctuation changes cost nothing here either.
+fn is_plausible_long_cleanup(a: &[String], b: &[String], max_divergence: f64) -> bool {
+    let longer = a.len().max(b.len());
+    if longer == 0 {
+        return true;
+    }
+
+    let length_change = a.len().abs_diff(b.len()) as f64 / longer as f64;
+    if length_change > max_divergence {
+        return false;
+    }
+
+    let before = shingles(a);
+    if before.is_empty() {
+        return true;
+    }
+    let after = shingles(b);
+
+    let survived = before.iter().filter(|s| after.contains(*s)).count() as f64;
+    let survival_ratio = survived / before.len() as f64;
+    let required = (1.0 - max_divergence).powi(SHINGLE_WORDS as i32);
+
+    survival_ratio >= required
+}
+
+/// Hashed [`SHINGLE_WORDS`]-word sequences of `words`.
+///
+/// Hashes rather than joined strings so a very long transcript costs a bounded
+/// amount of memory. A collision can only make survival look slightly better
+/// than it is, which errs toward accepting — the same direction as every other
+/// fail-open decision in this pipeline.
+fn shingles(words: &[String]) -> HashSet<u64> {
+    let mut set = HashSet::new();
+    if words.is_empty() {
+        return set;
+    }
+    if words.len() < SHINGLE_WORDS {
+        set.insert(hash_words(words));
+        return set;
+    }
+    for window in words.windows(SHINGLE_WORDS) {
+        set.insert(hash_words(window));
+    }
+    set
+}
+
+fn hash_words(words: &[String]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for word in words {
+        word.hash(&mut hasher);
+        // Separator, so ["ab", "c"] and ["a", "bc"] cannot collide.
+        0xffu8.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// Count how many times each `(before, after)` pair appears, keyed
@@ -670,10 +761,66 @@ mod tests {
         assert!(is_plausible_cleanup("a b c", "x y z", 1.0));
     }
 
+    /// A transcript too long to align is now checked by the bounded guard
+    /// instead of being waved through. This previously asserted the opposite —
+    /// that the same input was *accepted* — which is the hole being closed.
     #[test]
-    fn very_long_input_is_accepted_rather_than_stalling() {
+    fn a_very_long_transcript_replaced_by_a_summary_is_rejected() {
         let long = "word ".repeat(MAX_WORDS + 10);
-        assert!(is_plausible_cleanup(&long, "short", DEFAULT_MAX_DIVERGENCE));
+        assert!(!is_plausible_cleanup(
+            &long,
+            "short",
+            DEFAULT_MAX_DIVERGENCE
+        ));
+    }
+
+    #[test]
+    fn a_very_long_transcript_still_accepts_ordinary_cleanup() {
+        // Ten words per sentence, one of them a filler the cleanup removes,
+        // plus casing and punctuation the guard is supposed to ignore.
+        let original = "um so the plan for today is simple and clear ".repeat(900);
+        let cleaned = "So the plan for today is simple and clear. ".repeat(900);
+        assert!(original.split_whitespace().count() > MAX_WORDS);
+        assert!(is_plausible_cleanup(
+            &original,
+            &cleaned,
+            DEFAULT_MAX_DIVERGENCE
+        ));
+    }
+
+    #[test]
+    fn a_very_long_transcript_rewritten_wholesale_is_rejected() {
+        let original = "the quick brown fox jumps over the lazy dog ".repeat(300);
+        let cleaned =
+            "completely different prose about unrelated matters entirely written now ".repeat(300);
+        assert!(original.split_whitespace().count() > MAX_WORDS);
+        // Same length, so only the survival check can catch this.
+        assert!(!is_plausible_cleanup(
+            &original,
+            &cleaned,
+            DEFAULT_MAX_DIVERGENCE
+        ));
+    }
+
+    /// Filler-heavy speech is precisely what cleanup is for, so the long path
+    /// must not be stricter than the exact path about it. One word in five is
+    /// removed here, which is well beyond a realistic filler rate.
+    #[test]
+    fn a_very_long_disfluent_transcript_is_still_cleaned_up() {
+        let original = "um so the plan is uh simple and clear ".repeat(900);
+        let cleaned = "So the plan is simple and clear. ".repeat(900);
+        assert!(original.split_whitespace().count() > MAX_WORDS);
+        assert!(is_plausible_cleanup(
+            &original,
+            &cleaned,
+            DEFAULT_MAX_DIVERGENCE
+        ));
+    }
+
+    #[test]
+    fn a_very_long_transcript_is_accepted_when_untouched() {
+        let long = "one two three four five six seven eight nine ten ".repeat(400);
+        assert!(is_plausible_cleanup(&long, &long, DEFAULT_MAX_DIVERGENCE));
     }
 
     #[test]
