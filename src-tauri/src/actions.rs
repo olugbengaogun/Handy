@@ -459,20 +459,47 @@ pub(crate) async fn process_transcription_output(
 
     if post_process {
         if let Some(processed_text) = post_process_transcription(&settings, &final_text).await {
-            // Divergence guard. LLM post-processing is the only stage that can
-            // invent text, and whatever it returns gets pasted into whatever the
-            // user had focused. A confused model, a bad custom prompt, or an
-            // instruction embedded in the speech itself can all turn "tidy this
-            // up" into "answer this" or "summarise this". Reject a result that
-            // strays too far from what was actually said and keep the raw
-            // transcription — a slightly untidy transcript beats a fabricated
-            // one. Case and punctuation changes are normalised away first, since
-            // fixing those is exactly what cleanup is supposed to do.
-            if crate::audio_toolkit::is_plausible_cleanup(
+            // LLM post-processing is the only stage that can invent text, and
+            // whatever it returns gets pasted into whatever the user had
+            // focused. A confused model, a bad custom prompt, or an instruction
+            // embedded in the speech itself can all turn "tidy this up" into
+            // "answer this" or "summarise this". A slightly untidy transcript
+            // beats a fabricated one, so a suspect result is dropped in favour
+            // of the raw transcription.
+            //
+            // Two independent gates, because they catch different failures:
+            //
+            // * The **divergence** guard rejects output that strays too far
+            //   from what was said. Case and punctuation are normalised away
+            //   first, since fixing those is exactly what cleanup is for.
+            // * The **invariant** guard rejects output that changed a fact. The
+            //   divergence guard is a ratio and cannot see a single
+            //   catastrophic token — turning "₦80,000" into "₦18,000" in a long
+            //   transcript sits well inside its budget.
+            let rejection = if !crate::audio_toolkit::is_plausible_cleanup(
                 &final_text,
                 &processed_text,
                 crate::audio_toolkit::DEFAULT_MAX_DIVERGENCE,
             ) {
+                Some("diverged too far from the transcription")
+            } else if !crate::audio_toolkit::preserves_protected_values(
+                &final_text,
+                &processed_text,
+            ) {
+                Some("changed a number or dropped a link the transcription contained")
+            } else {
+                None
+            };
+
+            if let Some(reason) = rejection {
+                warn!(
+                    "Post-processing output {} ({} chars in, {} chars out); \
+                     keeping the raw transcription.",
+                    reason,
+                    final_text.len(),
+                    processed_text.len()
+                );
+            } else {
                 post_processed_text = Some(processed_text.clone());
                 final_text = processed_text;
 
@@ -488,13 +515,6 @@ pub(crate) async fn process_transcription_output(
                         post_process_prompt = Some(prompt.prompt.clone());
                     }
                 }
-            } else {
-                warn!(
-                    "Post-processing output diverged too far from the transcription \
-                     ({} chars in, {} chars out); keeping the raw transcription.",
-                    final_text.len(),
-                    processed_text.len()
-                );
             }
         }
     } else if final_text != transcription {
