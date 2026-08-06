@@ -1114,6 +1114,28 @@ impl TranscriptionManager {
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+        self.transcribe_with_language(audio, None)
+    }
+
+    /// Like [`transcribe`](Self::transcribe), but overrides the spoken-language
+    /// setting for this one run.
+    ///
+    /// Exists for `--transcribe-file --language`, which makes "does forcing the
+    /// language beat auto-detect on my own speech?" a two-command experiment
+    /// instead of a settings dance in the middle of a benchmark. Auto-detect
+    /// mistaking accented English for another language sends Whisper into
+    /// repeated temperature fallbacks, so the answer is worth measuring — but
+    /// only a measurement can settle it.
+    ///
+    /// The override replaces the persisted *intent* and nothing else: the
+    /// capability-aware coercion below still runs, so a model that cannot take
+    /// the requested language falls back exactly as it would otherwise. Nothing
+    /// is written to settings, matching every other CLI flag.
+    pub fn transcribe_with_language(
+        &self,
+        audio: Vec<f32>,
+        language_override: Option<&str>,
+    ) -> Result<String> {
         #[cfg(debug_assertions)]
         if std::env::var("HANDY_FORCE_TRANSCRIPTION_FAILURE").is_ok() {
             return Err(anyhow::anyhow!(
@@ -1151,6 +1173,13 @@ impl TranscriptionManager {
 
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);
+        let settings = match language_override {
+            Some(language) => AppSettings {
+                selected_language: language.to_string(),
+                ..settings
+            },
+            None => settings,
+        };
 
         // Lift quiet recordings toward a usable level before the model sees
         // them. Boost-only and gain-capped, so a healthy signal passes through

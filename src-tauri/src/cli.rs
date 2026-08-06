@@ -38,6 +38,12 @@ pub struct CliArgs {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Spoken language for --transcribe-file, e.g. `en`, or `auto` to detect
+    /// (default: the persisted setting). Runtime-only — settings are untouched,
+    /// so an A/B between `auto` and an explicit language is two commands.
+    #[arg(long, value_name = "LANG")]
+    pub language: Option<String>,
+
     /// Hard-select the compute device for --transcribe-file by its registry
     /// index (see --list-devices). Omit to use the persisted accelerator
     /// setting. transcribe-cpp (whisper-family) models only.

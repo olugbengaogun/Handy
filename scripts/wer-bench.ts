@@ -44,10 +44,20 @@
  *   --baseline <file> compare against a previous run's JSON and print the delta
  *   --out <file>      write results as JSON for later comparison
  *   --verified-only   score only transcripts a human has corrected in History
+ *   --language <code> force the spoken language for this run (e.g. `en`,
+ *                     `auto`); overrides the app setting without changing it
  *
  * Use `--verified-only` for any result that will decide something. Without it
  * the reference set includes transcripts nobody ever read, which are model
  * output rather than ground truth — see `loadSamples`.
+ *
+ * The language A/B — the highest-value single experiment available — is:
+ *
+ *   bun run scripts/wer-bench.ts --db <db> --verified-only --language auto --out auto.json
+ *   bun run scripts/wer-bench.ts --db <db> --verified-only --language en --baseline auto.json
+ *
+ * Auto-detect mistaking accented English for another language is a known way to
+ * lose a transcript entirely, so this is worth settling with a number.
  */
 
 import { Database } from "bun:sqlite";
@@ -163,6 +173,7 @@ interface Args {
   baseline?: string;
   out?: string;
   verifiedOnly: boolean;
+  language?: string;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -180,6 +191,7 @@ function parseArgs(argv: string[]): Args {
     baseline: get("--baseline"),
     out: get("--out"),
     verifiedOnly: argv.includes("--verified-only"),
+    language: get("--language"),
   };
 }
 
@@ -265,9 +277,13 @@ function transcribe(
   binary: string,
   wavPath: string,
   model?: string,
+  language?: string,
 ): string | null {
   const args = ["--transcribe-file", wavPath];
   if (model) args.push("--model", model);
+  // Runtime-only override, so an auto-vs-explicit comparison never has to touch
+  // the app's saved settings halfway through a benchmark run.
+  if (language) args.push("--language", language);
 
   const proc = spawnSync(binary, args, { encoding: "utf8", timeout: 300_000 });
   if (proc.status !== 0) {
@@ -327,7 +343,12 @@ function main(): void {
 
   const results: SampleResult[] = [];
   for (const [index, sample] of samples.entries()) {
-    const hypothesis = transcribe(args.binary, sample.wavPath, args.model);
+    const hypothesis = transcribe(
+      args.binary,
+      sample.wavPath,
+      args.model,
+      args.language,
+    );
     if (hypothesis === null) continue;
 
     const result = scoreSample(sample.id, sample.reference, hypothesis);
@@ -379,7 +400,11 @@ function main(): void {
   if (args.out) {
     // The reference set is recorded alongside the metrics so a later
     // `--baseline` run can tell whether the two are comparable at all.
-    const record = { ...summary, verifiedOnly: args.verifiedOnly };
+    const record = {
+      ...summary,
+      verifiedOnly: args.verifiedOnly,
+      language: args.language ?? "(app setting)",
+    };
     writeFileSync(args.out, `${JSON.stringify(record, null, 2)}\n`);
     console.log(`\nWrote ${args.out}`);
   }
