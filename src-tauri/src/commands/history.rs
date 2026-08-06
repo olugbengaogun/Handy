@@ -213,14 +213,22 @@ pub async fn update_history_transcription(
 
     let original = entry.transcription_text.clone();
 
+    // The derived fields are deliberately cleared rather than carried over.
+    // `post_processed_text` was produced by a cleanup model from the *previous*
+    // transcript; once the user rewrites that transcript by hand it describes
+    // text that no longer exists, and keeping it would leave the row asserting
+    // two different things at once. Retry is unaffected — it recomputes both
+    // fields and passes the fresh values.
     history_manager
-        .update_transcription(
-            id,
-            text.clone(),
-            entry.post_processed_text,
-            entry.post_process_prompt,
-        )
+        .update_transcription(id, text.clone(), None, None)
         .map_err(|e| e.to_string())?;
+
+    // A hand-edited transcript is the only reference text in the database a
+    // human has actually vouched for. Best-effort: provenance is worth
+    // recording, never worth failing the user's edit over.
+    if let Err(e) = history_manager.mark_verified(id) {
+        log::warn!("Failed to mark history entry {id} as verified: {e}");
+    }
 
     // Learn from the correction. This is the whole point of the learning loop:
     // a hand-edit is the clearest signal the app ever gets about how this

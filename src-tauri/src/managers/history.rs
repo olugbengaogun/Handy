@@ -63,6 +63,15 @@ static MIGRATIONS: &[M] = &[
     ),
     M::up("ALTER TABLE transcription_history ADD COLUMN model_id TEXT;"),
     M::up("ALTER TABLE transcription_history ADD COLUMN language TEXT;"),
+    // When the user hand-corrects a transcript, the stored text stops being a
+    // guess and becomes a human-verified reference. Nothing recorded that
+    // before, so `scripts/wer-bench.ts` had to treat *every* stored transcript
+    // as ground truth — including the ones nobody ever read. This column is the
+    // difference between a benchmark and a number.
+    //
+    // Deliberately not added to `HistoryEntry`: no Rust type changes means no
+    // regenerated `bindings.ts`, and the frontend neither knows nor cares.
+    M::up("ALTER TABLE transcription_history ADD COLUMN verified_at INTEGER;"),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -360,13 +369,22 @@ impl HistoryManager {
         // save, silently drifting from the text actually stored.
         let word_count = transcription_text.split_whitespace().count() as i64;
 
+        // Any rewrite of the text invalidates a previous verification: `retry`
+        // replaces the transcript with fresh *model output*, and a row still
+        // flagged as human-verified would feed that output back to
+        // `wer-bench --verified-only` as ground truth — a model grading its own
+        // homework. Cleared unconditionally here so the guarantee holds for
+        // every caller; the manual-edit path re-asserts it immediately
+        // afterwards via `mark_verified`, which is the one caller where a human
+        // actually read the result.
         let conn = self.get_connection()?;
         let updated = conn.execute(
             "UPDATE transcription_history
              SET transcription_text = ?1,
                  post_processed_text = ?2,
                  post_process_prompt = ?3,
-                 word_count = ?4
+                 word_count = ?4,
+                 verified_at = NULL
              WHERE id = ?5",
             params![
                 transcription_text,
@@ -400,6 +418,27 @@ impl HistoryManager {
         }
 
         Ok(entry)
+    }
+
+    /// Record that a human has read this transcript and vouched for its text.
+    ///
+    /// Called after a manual edit in History, which is the one moment the app
+    /// can be sure a person compared the transcript against what they meant.
+    /// `scripts/wer-bench.ts --verified-only` evaluates against exactly these
+    /// rows, so an accuracy number can be trusted rather than merely computed:
+    /// without this, an untouched transcript that was simply *wrong* counted as
+    /// ground truth and quietly flattered every model.
+    ///
+    /// Idempotent by intent — a later edit refreshes the timestamp, because the
+    /// verification that matters is the most recent one. Best-effort at the call
+    /// site: failing to record provenance must never fail the user's edit.
+    pub fn mark_verified(&self, id: i64) -> Result<()> {
+        let conn = self.get_connection()?;
+        conn.execute(
+            "UPDATE transcription_history SET verified_at = ?1 WHERE id = ?2",
+            params![Utc::now().timestamp(), id],
+        )?;
+        Ok(())
     }
 
     pub fn cleanup_old_entries(&self) -> Result<()> {
@@ -881,7 +920,8 @@ mod tests {
                 post_process_requested BOOLEAN NOT NULL DEFAULT 0,
                 has_audio BOOLEAN NOT NULL DEFAULT 1,
                 word_count INTEGER NOT NULL DEFAULT 0,
-                duration_secs REAL NOT NULL DEFAULT 0
+                duration_secs REAL NOT NULL DEFAULT 0,
+                verified_at INTEGER
             );",
         )
         .expect("create transcription_history table");

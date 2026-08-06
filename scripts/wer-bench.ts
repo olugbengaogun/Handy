@@ -43,6 +43,11 @@
  *   --limit <n>       cap the number of samples (default: 200)
  *   --baseline <file> compare against a previous run's JSON and print the delta
  *   --out <file>      write results as JSON for later comparison
+ *   --verified-only   score only transcripts a human has corrected in History
+ *
+ * Use `--verified-only` for any result that will decide something. Without it
+ * the reference set includes transcripts nobody ever read, which are model
+ * output rather than ground truth — see `loadSamples`.
  */
 
 import { Database } from "bun:sqlite";
@@ -157,6 +162,7 @@ interface Args {
   limit: number;
   baseline?: string;
   out?: string;
+  verifiedOnly: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -173,6 +179,7 @@ function parseArgs(argv: string[]): Args {
     limit: Number(get("--limit") ?? 200),
     baseline: get("--baseline"),
     out: get("--out"),
+    verifiedOnly: argv.includes("--verified-only"),
   };
 }
 
@@ -187,16 +194,52 @@ interface Sample {
  *
  * Ordered newest-first so a `--limit` run evaluates recent speech, which is what
  * the current dictionary and settings were tuned against.
+ *
+ * ## Why `verifiedOnly` matters more than it looks
+ *
+ * A stored transcript is not a reference just because it exists. Most rows were
+ * never read by anyone, so scoring against them measures how consistently the
+ * model repeats itself, not how right it is — and it flatters every model
+ * equally, which is the worst property a benchmark can have. `verified_at` is
+ * set when the user hand-corrects a transcript in History, which is the one
+ * moment a human demonstrably compared the text against what they meant.
+ *
+ * The default stays permissive so an existing workflow keeps producing the same
+ * numbers, but a result that is going to decide anything should come from
+ * `--verified-only`.
  */
-function loadSamples(dbPath: string, limit: number): Sample[] {
+function loadSamples(
+  dbPath: string,
+  limit: number,
+  verifiedOnly: boolean,
+): Sample[] {
   const db = new Database(dbPath, { readonly: true });
   const recordingsDir = join(dirname(dbPath), "recordings");
+
+  // The column arrives with a migration that only runs when the app itself
+  // opens the database. Asking for it on an older file would throw "no such
+  // column" from deep inside a query, so check first and say something useful.
+  if (verifiedOnly) {
+    const columns = db
+      .query(`PRAGMA table_info(transcription_history)`)
+      .all() as { name: string }[];
+    if (!columns.some((column) => column.name === "verified_at")) {
+      db.close();
+      console.error(
+        "This database predates the verified_at column.\n" +
+          "Launch the app once so its migrations run, correct a transcript or two\n" +
+          "in History, then re-run with --verified-only.",
+      );
+      process.exit(2);
+    }
+  }
 
   const rows = db
     .query(
       `SELECT id, file_name, transcription_text
        FROM transcription_history
        WHERE has_audio = 1 AND TRIM(transcription_text) != ''
+       ${verifiedOnly ? "AND verified_at IS NOT NULL" : ""}
        ORDER BY timestamp DESC
        LIMIT ?`,
     )
@@ -258,14 +301,26 @@ function main(): void {
     process.exit(2);
   }
 
-  const samples = loadSamples(args.db, args.limit);
+  const samples = loadSamples(args.db, args.limit, args.verifiedOnly);
   if (samples.length === 0) {
     console.error(
-      "No samples with audio on disk.\n" +
-        "Turn on Settings → Advanced → Keep audio recordings, dictate for a couple of weeks,\n" +
-        "correct transcripts as usual, then re-run this.",
+      args.verifiedOnly
+        ? "No verified samples.\n" +
+            "A transcript becomes verified when you correct it in History — that edit is\n" +
+            "what makes it a reference. Correct a batch, then re-run."
+        : "No samples with audio on disk.\n" +
+            "Turn on Settings → Advanced → Keep audio recordings, dictate for a couple of weeks,\n" +
+            "correct transcripts as usual, then re-run this.",
     );
     process.exit(1);
+  }
+
+  if (!args.verifiedOnly) {
+    console.warn(
+      "! Scoring against every stored transcript, including ones nobody ever checked.\n" +
+        "  Those are model output, not ground truth, so this number flatters the model.\n" +
+        "  Use --verified-only before letting a result decide anything.\n",
+    );
   }
 
   console.log(`Evaluating ${samples.length} sample(s)...\n`);
@@ -293,7 +348,21 @@ function main(): void {
   console.log(`Edit rate:  ${pct(summary.editRate)}`);
 
   if (args.baseline && existsSync(args.baseline)) {
-    const before = JSON.parse(readFileSync(args.baseline, "utf8")) as Summary;
+    const before = JSON.parse(
+      readFileSync(args.baseline, "utf8"),
+    ) as Summary & {
+      verifiedOnly?: boolean;
+    };
+    // Comparing a verified run against an unverified one compares two different
+    // reference sets, so the delta measures the change of corpus rather than the
+    // change of model. Say so instead of printing a confident wrong number.
+    if ((before.verifiedOnly ?? false) !== args.verifiedOnly) {
+      console.warn(
+        "\n! Baseline was recorded with a different --verified-only setting.\n" +
+          "  The two runs scored against different reference sets; the delta below\n" +
+          "  is not a like-for-like comparison.",
+      );
+    }
     // Negative deltas are improvements for all three metrics.
     const delta = (now: number, then: number) => {
       const d = now - then;
@@ -308,7 +377,10 @@ function main(): void {
   }
 
   if (args.out) {
-    writeFileSync(args.out, `${JSON.stringify(summary, null, 2)}\n`);
+    // The reference set is recorded alongside the metrics so a later
+    // `--baseline` run can tell whether the two are comparable at all.
+    const record = { ...summary, verifiedOnly: args.verifiedOnly };
+    writeFileSync(args.out, `${JSON.stringify(record, null, 2)}\n`);
     console.log(`\nWrote ${args.out}`);
   }
 }
