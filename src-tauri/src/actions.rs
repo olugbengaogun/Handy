@@ -973,21 +973,30 @@ impl ShortcutAction for TranscribeAction {
                             // Surface the failure to the UI (toast). The full
                             // message is also in handy.log via the line above.
                             let _ = ah.emit("transcription-error", err.to_string());
-                            // Save entry with empty text so user can retry. Audio is always
-                            // kept here regardless of keep_audio_recordings — there's no
-                            // transcript yet, so the audio is the only thing making this
-                            // entry useful (retry needs it).
+                            // Save an entry with empty text so the failure is
+                            // visible. Audio is kept only if the user asked for
+                            // it to be: this path used to retain the recording
+                            // unconditionally so that retry would work, which
+                            // quietly made "don't keep my audio" mean "unless
+                            // something goes wrong". A retention setting that
+                            // holds only on the happy path is not a setting.
+                            // With retention off the entry cannot be retried,
+                            // and `retry_history_entry_transcription` already
+                            // says exactly that.
                             if wav_saved {
-                                if let Err(save_err) = hm.save_entry(
+                                match hm.save_entry(
                                     file_name,
                                     String::new(),
                                     post_process,
                                     None,
                                     None,
-                                    true,
+                                    keep_audio_recordings,
                                     duration_secs,
                                 ) {
-                                    error!("Failed to save failed history entry: {}", save_err);
+                                    Ok(_) => discard_audio_if_unwanted(),
+                                    Err(save_err) => {
+                                        error!("Failed to save failed history entry: {}", save_err)
+                                    }
                                 }
                             }
                             utils::hide_recording_overlay(&ah);

@@ -599,8 +599,15 @@ fn default_recording_retention_period() -> RecordingRetentionPeriod {
     RecordingRetentionPeriod::PreserveLimit
 }
 
+/// Fresh installs do not keep recordings.
+///
+/// Audio is the most sensitive thing this app touches, and keeping it should be
+/// a choice someone made rather than one they inherited. A store that already
+/// carries a value keeps it untouched — `serde(default)` only fills the field in
+/// when it is absent — so no existing user's setting changes, in either
+/// direction, and anyone collecting a benchmark corpus keeps collecting it.
 fn default_keep_audio_recordings() -> bool {
-    true
+    false
 }
 
 fn default_audio_feedback_volume() -> f32 {

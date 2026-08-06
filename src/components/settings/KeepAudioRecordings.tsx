@@ -13,7 +13,10 @@ export const KeepAudioRecordings: React.FC<KeepAudioRecordingsProps> =
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
 
-    const keepAudioRecordings = getSetting("keep_audio_recordings") ?? true;
+    // Matches the backend default. A fallback of `true` here would show the
+    // toggle as on before settings load, which is the wrong way round to be
+    // wrong about whether audio is being kept.
+    const keepAudioRecordings = getSetting("keep_audio_recordings") ?? false;
 
     return (
       <ToggleSwitch
