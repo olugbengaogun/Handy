@@ -100,15 +100,28 @@ fn looks_like_name_part(word: &str) -> bool {
     // "I'm" came to be offered as a name to add to the dictionary, 73 sightings
     // deep.
     //
-    // Matching on the stem rather than listing contractions covers I'm/I'll/
-    // I've/I'd, we're, they've, it's, that's, don't and the rest at once, in
-    // one rule instead of forty. Real names keep their apostrophes: the stem of
-    // "O'Brien" is "o" and of "D'Angelo" is "d", neither of which is a common
-    // word, so both still qualify.
+    // The test is the *suffix*, not the stem. Stem-matching looks right and
+    // quietly misses the whole "n't" family: the stem of "don't" is "don",
+    // which is not a word on any list. These five endings only ever follow a
+    // pronoun or an auxiliary verb, so their presence settles it without
+    // needing to recognise what came before:
+    //
+    //   't  -> don't, can't, won't, aren't, wouldn't, isn't ...
+    //   'm  -> I'm          're -> they're, we're
+    //   've -> I've, we've  'll -> I'll, they'll
+    //
+    // 's and 'd are genuinely ambiguous ("it's" vs a possessive), so those fall
+    // through to the stem check rather than being assumed.
+    //
+    // Real names keep their apostrophes: "O'Brien" and "D'Angelo" have suffixes
+    // "brien" and "angelo", and stems "o" and "d" that are on no stop-list.
     //
     // Both apostrophes are handled: speech-to-text emits the typographic U+2019
     // at least as often as the ASCII one.
-    if let Some((stem, _)) = lower.split_once(['\'', '\u{2019}']) {
+    if let Some((stem, suffix)) = lower.split_once(['\'', '\u{2019}']) {
+        if matches!(suffix, "t" | "m" | "re" | "ve" | "ll") {
+            return false;
+        }
         if COMMON_CAPITALISED.contains(&stem) {
             return false;
         }
@@ -221,7 +234,12 @@ mod tests {
     /// stop-list check intact and "i'm" is not "i".
     #[test]
     fn contractions_of_common_words_are_not_names() {
-        for word in ["I'm", "I've", "It's", "That's", "They're", "Don't"] {
+        // The "n't" family is the one a stem-based rule silently misses: the
+        // stem of "Don't" is "don", which is not a word on any stop-list.
+        for word in [
+            "I'm", "I've", "I'll", "It's", "That's", "They're", "Don't", "Won't", "Aren't",
+            "Doesn't", "Wouldn't", "Isn't", "Can't", "Couldn't", "Haven't",
+        ] {
             assert!(
                 !looks_like_name_part(word),
                 "{word} should not be mined as a name"
