@@ -404,6 +404,8 @@ jobs:
           GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
         run: |
           REASON="merge conflict"
+          # Referenced further down on both paths, so it must exist on both.
+          WORKFLOW_CONFLICTS=""
           if [ "${{ steps.merge.outputs.status }}" == "merged" ]; then
             REASON="tests failed after merging cleanly"
             # git merge --no-edit already auto-committed the merge itself on
@@ -413,6 +415,35 @@ jobs:
           else
             # A conflicted merge leaves markers unstaged with no commit yet —
             # stage and commit them so the PR shows exactly what collided.
+            #
+            # Except in .github/workflows/. A conflict marker is not valid YAML,
+            # and GitHub parses every workflow file on push regardless of its
+            # triggers: on 2026-08-07 the markers left in build.yml produced a
+            # second failure mail ("No jobs were run") for a file that has no
+            # push trigger at all, about a collision the first mail had already
+            # reported. One conflict, two alarms, one of them meaningless.
+            #
+            # So workflow files keep *our* version on the branch - the fork's CI
+            # is deliberately trimmed to one target and is the side that almost
+            # always wins anyway - and upstream's version is parked beside it
+            # under a name GitHub will not try to parse. Nothing is hidden: the
+            # PR body lists every file this happened to, and the .upstream copy
+            # is right there to diff against.
+            for f in $(git diff --name-only --diff-filter=U -- .github/workflows); do
+              # Stage 3 is "theirs". A file upstream *deleted* has no stage 3, so
+              # this is allowed to come up empty rather than abort the step.
+              if git show ":3:$f" > "${f}.upstream" 2>/dev/null; then
+                git add "${f}.upstream"
+                NOTE="- \`$f\` (upstream's version saved as \`${f}.upstream\`)"
+              else
+                rm -f "${f}.upstream"
+                NOTE="- \`$f\` (upstream has no version of this file)"
+              fi
+              WORKFLOW_CONFLICTS="$(printf '%s%s\n' "$WORKFLOW_CONFLICTS" "$NOTE")"
+              git checkout --ours -- "$f"
+              git add "$f"
+            done
+
             git add -A
             git commit -m "chore: upstream sync (has conflicts, needs review)"
           fi
@@ -432,9 +463,24 @@ jobs:
           # failed even though it had done its job perfectly. Worse, the failure
           # arrived as an alarm about the safety net rather than a prompt to
           # resolve the conflict, which is the opposite of what this is for.
+          BODY="Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`."
+          # printf rather than a multi-line string literal: every line inside a
+          # `run: |` block must stay indented past the block's margin, and a
+          # continuation starting at column 0 silently ends the scalar and
+          # corrupts the workflow - which is the exact class of breakage the
+          # workflow-file handling above exists to prevent.
+          if [ -n "$WORKFLOW_CONFLICTS" ]; then
+            BODY="$(printf '%s\n\n%s\n%s\n%s\n\n%s' \
+              "$BODY" \
+              "**Workflow files were left at this fork's version** so the branch stays" \
+              "valid YAML (a conflict marker under \`.github/workflows/\` makes GitHub" \
+              "report a phantom failed run). Upstream's side is parked beside each one:" \
+              "$WORKFLOW_CONFLICTS")"
+          fi
+
           if ! gh pr create \
             --title "Upstream sync needs a look ($REASON)" \
-            --body "Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`." \
+            --body "$BODY" \
             --base main --head "$BRANCH"; then
             {
               echo "### Upstream sync needs a look"
