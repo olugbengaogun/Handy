@@ -72,6 +72,17 @@ static MIGRATIONS: &[M] = &[
     // Deliberately not added to `HistoryEntry`: no Rust type changes means no
     // regenerated `bindings.ts`, and the frontend neither knows nor cares.
     M::up("ALTER TABLE transcription_history ADD COLUMN verified_at INTEGER;"),
+    // One-time data fix-ups that need real Rust, not SQL, record themselves
+    // here. `learning::rekey_v1` re-normalises correction keys through the same
+    // word-core function the matcher uses, which SQLite's string functions
+    // cannot express per-word. The migration list can only create the marker;
+    // the work itself runs once at startup and writes the row.
+    M::up(
+        "CREATE TABLE IF NOT EXISTS schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]

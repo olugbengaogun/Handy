@@ -120,7 +120,13 @@ pub struct Edit {
 }
 
 /// Strip leading/trailing punctuation, returning the alphanumeric core.
-fn core(word: &str) -> &str {
+///
+/// Shared with the learning loop's `key_of` (see `managers::learning`), which
+/// must normalise a correction exactly the way the correction *matcher* does -
+/// otherwise "grandmaster" and "grandmaster," are one rule when applied and two
+/// separate lessons when learned, and neither ever reaches the promotion
+/// threshold.
+pub(crate) fn core(word: &str) -> &str {
     let start = word
         .char_indices()
         .find(|(_, c)| c.is_alphanumeric())
