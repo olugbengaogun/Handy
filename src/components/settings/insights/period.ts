@@ -227,6 +227,6 @@ export function formatPeriod(
       return String(end.getFullYear());
 
     case "all":
-      return t("settings.insights.range.allTime");
+      return t("settings.insights.kind.all");
   }
 }

@@ -482,7 +482,7 @@
       "totalRecordings": "Recordings",
       "timeSpeaking": "Time Speaking",
       "wordsPerDay": "Words per day",
-      "wordsCount": "{{count}} word",
+      "wordsCount_one": "{{count}} word",
       "wordsCount_other": "{{count}} words",
       "peak": "peak {{words}}",
       "streak": "{{current}}-day streak · longest {{longest}}",
@@ -503,13 +503,7 @@
       "wordsPerWeek": "Words per week",
       "emptyPeriod": "Nothing dictated in this period.",
       "longestOnly": "Longest run {{longest}} days",
-      "since": "Since {{date}}.",
-      "range": {
-        "today": "Today",
-        "week": "This Week",
-        "month": "This Month",
-        "allTime": "All time"
-      }
+      "since": "Since {{date}}."
     },
     "debug": {
       "title": "Debug",

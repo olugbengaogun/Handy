@@ -1,6 +1,6 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
-    history::{HistoryManager, PaginatedHistory, StatsRange, UsageRange, UsageStats},
+    history::{HistoryManager, PaginatedHistory, UsageRange},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
@@ -179,18 +179,6 @@ pub async fn update_keep_audio_recordings(app: AppHandle, keep: bool) -> Result<
     settings.keep_audio_recordings = keep;
     crate::settings::write_settings(&app, settings);
     Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn get_usage_stats(
-    _app: AppHandle,
-    history_manager: State<'_, Arc<HistoryManager>>,
-    range: StatsRange,
-) -> Result<UsageStats, String> {
-    history_manager
-        .get_usage_stats(range)
-        .map_err(|e| e.to_string())
 }
 
 /// Per-day dictation totals between two local `YYYY-MM-DD` dates, inclusive,

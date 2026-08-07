@@ -731,7 +731,6 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             commands::history::update_keep_audio_recordings,
             commands::history::update_history_transcription,
-            commands::history::get_usage_stats,
             commands::history::get_usage_range,
             commands::learning::get_learning_suggestions,
             commands::learning::get_learned_rules,

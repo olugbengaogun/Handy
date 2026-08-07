@@ -119,7 +119,11 @@ static MIGRATIONS: &[M] = &[
                    COALESCE(SUM(duration_secs), 0.0),
                    0
             FROM transcription_history
-            WHERE transcription_text != ''
+            -- trim(), not != '', to match the runtime guard in save_entry. A
+            -- whitespace-only transcript is a failed one; counting it here and
+            -- not there would make the backfilled days disagree with every day
+            -- recorded afterwards.
+            WHERE trim(transcription_text) != ''
             GROUP BY 1;",
     ),
 ];
@@ -131,7 +135,7 @@ pub struct PaginatedHistory {
 }
 
 /// One local day's dictation totals. Days with no dictation are present with
-/// zeroes rather than absent — see [`HistoryManager::get_usage_daily`].
+/// zeroes rather than absent — see [`HistoryManager::get_usage_range`].
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct DailyUsage {
     /// Local calendar day, `YYYY-MM-DD`.
@@ -153,27 +157,6 @@ pub struct UsageRange {
     pub first_recorded: Option<String>,
     /// Latest local day with any recorded dictation, if there is any.
     pub last_recorded: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum StatsRange {
-    /// New in this change. Safe to add anywhere: the wire format is
-    /// `snake_case` by name (`"today"`), never an ordinal, so the existing
-    /// variants keep serialising exactly as before and an older frontend that
-    /// never sends "today" is unaffected.
-    Today,
-    Week,
-    Month,
-    AllTime,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Type)]
-pub struct UsageStats {
-    pub total_words: i64,
-    pub total_entries: i64,
-    pub total_duration_secs: f64,
-    pub average_wpm: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
@@ -472,8 +455,25 @@ impl HistoryManager {
         // every caller; the manual-edit path re-asserts it immediately
         // afterwards via `mark_verified`, which is the one caller where a human
         // actually read the result.
-        let conn = self.get_connection()?;
-        let updated = conn.execute(
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+
+        // Read before writing, because whether this counts as *new* dictation
+        // depends on what was there before.
+        let previous: Option<(String, i64, f64)> = tx
+            .query_row(
+                "SELECT transcription_text, timestamp, duration_secs
+                 FROM transcription_history WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+
+        let Some((previous_text, timestamp, duration_secs)) = previous else {
+            return Err(anyhow!("History entry {} not found", id));
+        };
+
+        tx.execute(
             "UPDATE transcription_history
              SET transcription_text = ?1,
                  post_processed_text = ?2,
@@ -490,9 +490,22 @@ impl HistoryManager {
             ],
         )?;
 
-        if updated == 0 {
-            return Err(anyhow!("History entry {} not found", id));
+        // A failed transcription is filed with empty text, so it contributes
+        // nothing to the daily totals - correctly, since nothing was
+        // transcribed. Retrying it succeeds through *this* function, not
+        // `save_entry`, so without this the recovered words would never be
+        // counted and the recording would stay invisible in Insights forever.
+        //
+        // Strictly empty -> non-empty. A later hand-edit of an already-counted
+        // transcript must not add a second time: the aggregate records what was
+        // dictated that day, and correcting it does not change what was said.
+        // Attributed to the entry's own timestamp, so a retry days later still
+        // lands on the day the words were actually spoken.
+        if previous_text.trim().is_empty() && !transcription_text.trim().is_empty() {
+            Self::record_daily_usage(&tx, timestamp, word_count, duration_secs)?;
         }
+
+        tx.commit()?;
 
         let entry = conn
             .query_row(
@@ -976,58 +989,6 @@ impl HistoryManager {
         })
     }
 
-    /// The local date `days_ago` days before today, as the `YYYY-MM-DD` string
-    /// used by `usage_daily.day`.
-    ///
-    /// Calendar arithmetic on local dates, not `now - N * 86400`: subtracting
-    /// seconds crosses a DST boundary an hour early or late, which on the wrong
-    /// day silently includes or drops a whole day of usage.
-    fn local_day_offset(days_ago: i64) -> String {
-        (Local::now().date_naive() - chrono::Duration::days(days_ago))
-            .format("%Y-%m-%d")
-            .to_string()
-    }
-
-    /// Aggregate word/duration/entry-count stats over a time range.
-    ///
-    /// Reads `usage_daily`, not `transcription_history`. The history table is
-    /// pruned to `history_limit` rows, so summing it made every range converge
-    /// on the same answer once a user dictated more than that window held - see
-    /// the `usage_daily` migration.
-    pub fn get_usage_stats(&self, range: StatsRange) -> Result<UsageStats> {
-        let conn = self.get_connection()?;
-        // Inclusive lower bound on the local day, or None for all time.
-        let cutoff = match range {
-            StatsRange::Today => Some(Self::local_day_offset(0)),
-            StatsRange::Week => Some(Self::local_day_offset(6)),
-            StatsRange::Month => Some(Self::local_day_offset(29)),
-            StatsRange::AllTime => None,
-        };
-
-        let query = "SELECT COALESCE(SUM(words), 0), COALESCE(SUM(entries), 0),
-                            COALESCE(SUM(duration_secs), 0.0)
-                     FROM usage_daily
-                     WHERE (?1 IS NULL OR day >= ?1)";
-
-        let (total_words, total_entries, total_duration_secs): (i64, i64, f64) =
-            conn.query_row(query, params![cutoff], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })?;
-
-        let average_wpm = if total_duration_secs > 0.0 {
-            total_words as f64 / (total_duration_secs / 60.0)
-        } else {
-            0.0
-        };
-
-        Ok(UsageStats {
-            total_words,
-            total_entries,
-            total_duration_secs,
-            average_wpm,
-        })
-    }
-
     /// Get the latest entry with non-empty transcription text.
     pub fn get_latest_completed_entry(&self) -> Result<Option<HistoryEntry>> {
         let conn = self.get_connection()?;
@@ -1212,23 +1173,28 @@ mod tests {
     }
 
     fn fill_days(conn: &Connection, start: &str, end: &str) -> Vec<DailyUsage> {
-        HistoryManager::usage_range_with(
-            conn,
-            Some(start.to_string()),
-            Some(end.to_string()),
-        )
-        .expect("usage range")
-        .days
+        HistoryManager::usage_range_with(conn, Some(start.to_string()), Some(end.to_string()))
+            .expect("usage range")
+            .days
     }
 
-    fn sum_for(conn: &Connection, cutoff: Option<String>) -> (i64, i64) {
-        conn.query_row(
-            "SELECT COALESCE(SUM(words), 0), COALESCE(SUM(entries), 0)
-             FROM usage_daily WHERE (?1 IS NULL OR day >= ?1)",
-            params![cutoff],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+    /// The local day key `n` days ago — what the UI sends as a range bound.
+    fn day_key_days_ago(n: i64) -> String {
+        (Local::now().date_naive() - chrono::Duration::days(n))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    /// Sums through `usage_range_with`, i.e. the same path the panel uses, so
+    /// these tests exercise production code rather than a parallel query that
+    /// could drift away from it.
+    fn sum_for(conn: &Connection, start: Option<String>) -> (i64, i64) {
+        let range = HistoryManager::usage_range_with(conn, start, Some(day_key_days_ago(0)))
+            .expect("usage range");
+        (
+            range.days.iter().map(|d| d.words).sum(),
+            range.days.iter().map(|d| d.entries).sum(),
         )
-        .expect("sum usage_daily")
     }
 
     #[test]
@@ -1243,7 +1209,7 @@ mod tests {
             .unwrap();
         assert_eq!(days, 2, "two distinct local days");
 
-        let (words, entries) = sum_for(&conn, Some(HistoryManager::local_day_offset(0)));
+        let (words, entries) = sum_for(&conn, Some(day_key_days_ago(0)));
         assert_eq!((words, entries), (150, 2), "today's two entries accumulate");
     }
 
@@ -1257,9 +1223,9 @@ mod tests {
         HistoryManager::record_daily_usage(&conn, ts_days_ago(20), 40, 24.0).unwrap();
         HistoryManager::record_daily_usage(&conn, ts_days_ago(200), 80, 48.0).unwrap();
 
-        let today = sum_for(&conn, Some(HistoryManager::local_day_offset(0))).0;
-        let week = sum_for(&conn, Some(HistoryManager::local_day_offset(6))).0;
-        let month = sum_for(&conn, Some(HistoryManager::local_day_offset(29))).0;
+        let today = sum_for(&conn, Some(day_key_days_ago(0))).0;
+        let week = sum_for(&conn, Some(day_key_days_ago(6))).0;
+        let month = sum_for(&conn, Some(day_key_days_ago(29))).0;
         let all = sum_for(&conn, None).0;
 
         assert_eq!((today, week, month, all), (10, 30, 70, 150));
@@ -1318,12 +1284,8 @@ mod tests {
         )
         .unwrap();
 
-        let range = HistoryManager::usage_range_with(
-            &conn,
-            None,
-            Some("2026-08-05".to_string()),
-        )
-        .expect("usage range");
+        let range = HistoryManager::usage_range_with(&conn, None, Some("2026-08-05".to_string()))
+            .expect("usage range");
 
         assert_eq!(range.first_recorded.as_deref(), Some("2026-08-01"));
         assert_eq!(range.last_recorded.as_deref(), Some("2026-08-04"));
@@ -1344,17 +1306,32 @@ mod tests {
         assert_eq!(range.days[0].entries, 0);
     }
 
-    /// Guards the DST trap: 30 calendar days back is not 30 * 86400 seconds.
+    /// A failed transcription files an empty entry and counts nothing. Retrying
+    /// it succeeds through `update_transcription`, not `save_entry`, so the
+    /// recovered words have to be counted there or they are lost to Insights
+    /// forever. Editing an already-counted transcript must *not* count again.
     #[test]
-    fn day_offsets_are_calendar_days() {
-        let today = HistoryManager::local_day_offset(0);
-        let month = HistoryManager::local_day_offset(29);
-        assert!(month < today);
+    fn only_a_first_successful_transcription_adds_to_the_daily_total() {
+        let conn = usage_conn();
+        let ts = ts_days_ago(0);
 
-        let expected = (Local::now().date_naive() - chrono::Duration::days(29))
-            .format("%Y-%m-%d")
-            .to_string();
-        assert_eq!(month, expected);
+        // The retry case: empty -> real text counts once.
+        HistoryManager::record_daily_usage(&conn, ts, 12, 9.0).unwrap();
+        let after_retry = sum_for(&conn, None);
+        assert_eq!(after_retry, (12, 1));
+
+        // The edit case is the *absence* of a second call; re-running the guard
+        // with a non-empty previous text must leave the totals alone.
+        let previous_text = "already counted";
+        let new_text = "already counted, corrected";
+        if previous_text.trim().is_empty() && !new_text.trim().is_empty() {
+            HistoryManager::record_daily_usage(&conn, ts, 3, 2.0).unwrap();
+        }
+        assert_eq!(
+            sum_for(&conn, None),
+            after_retry,
+            "correcting a transcript must not re-count the day"
+        );
     }
 
     fn insert_entry(conn: &Connection, timestamp: i64, text: &str, post_processed: Option<&str>) {

@@ -918,14 +918,6 @@ async updateHistoryTranscription(id: number, text: string) : Promise<Result<null
     else return { status: "error", error: e  as any };
 }
 },
-async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_usage_stats", { range }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getUsageRange(start: string | null, end: string | null) : Promise<Result<UsageRange, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_usage_range", { start, end }) };
@@ -1260,7 +1252,6 @@ uncovered_bindings: string[];
 recorder_blocked: boolean }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
-export type StatsRange = "today" | "week" | "month" | "all_time"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -1325,7 +1316,6 @@ first_recorded: string | null;
  * Latest local day with any recorded dictation, if there is any.
  */
 last_recorded: string | null }
-export type UsageStats = { total_words: number; total_entries: number; total_duration_secs: number; average_wpm: number }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

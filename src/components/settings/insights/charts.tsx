@@ -202,12 +202,17 @@ export const StreakGrid: React.FC<{
     return [q(0.25), q(0.5), q(0.75)];
   }, [data]);
 
+  // Compared with `>` against the lower thresholds and `>=` against the top,
+  // so a day equal to the busiest reads as busiest. The naive `<=` chain put
+  // every day on the *palest* step whenever the values were uniform — which is
+  // exactly the shape of a new user's first week, and made a calendar that had
+  // data in it look empty.
   const colorFor = (words: number) => {
     if (words <= 0) return empty;
-    if (words <= thresholds[0]) return ramp[0];
-    if (words <= thresholds[1]) return ramp[1];
-    if (words <= thresholds[2]) return ramp[2];
-    return ramp[3];
+    if (words >= thresholds[2]) return ramp[3];
+    if (words > thresholds[1]) return ramp[2];
+    if (words > thresholds[0]) return ramp[1];
+    return ramp[0];
   };
 
   // Pad the head so the first column starts on a Sunday and rows stay weekdays.
