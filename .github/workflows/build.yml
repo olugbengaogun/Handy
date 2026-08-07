@@ -597,30 +597,20 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-<<<<<<< HEAD
           # Tauri updater signing is intentionally NOT gated on sign-binaries:
           # it's a free, self-generated key (unlike the paid Apple/Azure OS
           # code-signing above) and should always run so auto-updates keep
           # working even on unsigned/ad-hoc builds.
+          #
+          # Upstream gates these on `inputs.sign-binaries` and sets the Apple and
+          # Azure secrets inline here. Neither is taken: the OS-signing secrets
+          # are already exported to $GITHUB_ENV by the step above, and gating the
+          # updater key would ship an unsigned update manifest that this fork's
+          # own installed builds then refuse — the auto-updater would silently
+          # stop working. Upstream's LINUXDEPLOY_OUTPUT_VERSION is dropped with
+          # the rest of the AppImage path; this fork publishes macOS only.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-=======
-          APPLE_ID: ${{ inputs.sign-binaries && secrets.APPLE_ID || '' }}
-          APPLE_ID_PASSWORD: ${{ inputs.sign-binaries && secrets.APPLE_ID_PASSWORD || '' }}
-          APPLE_PASSWORD: ${{ inputs.sign-binaries && secrets.APPLE_PASSWORD || '' }}
-          APPLE_TEAM_ID: ${{ inputs.sign-binaries && secrets.APPLE_TEAM_ID || '' }}
-          APPLE_CERTIFICATE: ${{ inputs.sign-binaries && secrets.APPLE_CERTIFICATE || '' }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ inputs.sign-binaries && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-          APPLE_SIGNING_IDENTITY: ${{ inputs.sign-binaries && env.CERT_ID || '' }}
-          AZURE_CLIENT_ID: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_ID || '' }}
-          AZURE_CLIENT_SECRET: ${{ inputs.sign-binaries && secrets.AZURE_CLIENT_SECRET || '' }}
-          AZURE_TENANT_ID: ${{ inputs.sign-binaries && secrets.AZURE_TENANT_ID || '' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-          # linuxdeploy passes this to appimagetool, which writes it as
-          # X-AppImage-Version for desktop integration tools such as Gear Lever.
-          LINUXDEPLOY_OUTPUT_VERSION: ${{ contains(inputs.platform, 'ubuntu') && steps.get-version.outputs.version || '' }}
->>>>>>> upstream/main
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
@@ -628,7 +618,6 @@ jobs:
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
           args: ${{ inputs.build-args }}
 
-<<<<<<< HEAD
       # Releases publish themselves now, and nothing anywhere else launches the
       # app, so this is the only thing standing between a broken build and the
       # user's Mac. Cheap and decisive: main() parses CLI args before any Tauri
@@ -654,41 +643,6 @@ jobs:
             otool -L "$BIN" >&2 || true
             exit 1
           fi
-=======
-      # tauri-action uploads release assets before returning, so verify the
-      # metadata produced by Tauri itself rather than relying only on the later
-      # post-processing audit.
-      - name: Verify AppImage version metadata before post-processing
-        if: contains(inputs.platform, 'ubuntu')
-        shell: bash
-        run: |
-          set -euo pipefail
-          PROFILE="${{ steps.build-profile.outputs.profile }}"
-          APPIMAGE_PATH="$(find "src-tauri/target/${PROFILE}/bundle/appimage" -name '*.AppImage' -print -quit 2>/dev/null || true)"
-          if [ -z "$APPIMAGE_PATH" ]; then
-            echo "No AppImage produced by this Linux build; skipping metadata verification"
-            exit 0
-          fi
-          APPIMAGE_PATH="$(readlink -f "$APPIMAGE_PATH")"
-          WORKDIR="$(mktemp -d)"
-          trap 'rm -rf "$WORKDIR"' EXIT
-          (
-            cd "$WORKDIR"
-            # AppImage integration tools read the root desktop entry. appimagetool
-            # adds X-AppImage-Version there, not to the source copy under usr/share.
-            "$APPIMAGE_PATH" --appimage-extract '*.desktop' >/dev/null
-            DESKTOP_FILE="$(find squashfs-root -maxdepth 1 -type f -name '*.desktop' -print -quit)"
-            if [ -z "$DESKTOP_FILE" ]; then
-              echo "ERROR: AppImage desktop metadata is missing" >&2
-              exit 1
-            fi
-            if ! grep -Fqx 'X-AppImage-Version=${{ steps.get-version.outputs.version }}' "$DESKTOP_FILE"; then
-              echo "ERROR: AppImage version metadata is missing or incorrect:" >&2
-              grep -E '^X-AppImage-Version=' "$DESKTOP_FILE" >&2 || true
-              exit 1
-            fi
-          )
->>>>>>> upstream/main
 
       - name: Verify macOS dylib bundling
         # Left pinned to x86_64 deliberately. This fork only builds aarch64, so

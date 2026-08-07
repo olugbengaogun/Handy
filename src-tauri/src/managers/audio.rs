@@ -934,7 +934,6 @@ impl AudioRecordingManager {
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
         // Device settings changed; re-enumerate the device and restart capture.
         self.invalidate_device_cache();
-<<<<<<< HEAD
         // If currently open, restart the microphone stream to use the new device
         if *self.is_open.lock().unwrap() {
             // stop_microphone_stream unmutes as a safety net. If that mute belongs
@@ -943,10 +942,6 @@ impl AudioRecordingManager {
             // in for the rest of the take. apply_mute re-snapshots the now-restored
             // system state, so the eventual remove_mute still lands correctly.
             let restore_mute_after_restart = self.mute_is_active();
-=======
-        let was_open = *self.is_open.lock().unwrap();
-        if was_open {
->>>>>>> upstream/main
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
             self.start_microphone_stream()?;
