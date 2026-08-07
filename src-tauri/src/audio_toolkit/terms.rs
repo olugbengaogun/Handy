@@ -90,7 +90,30 @@ fn looks_like_name_part(word: &str) -> bool {
     if c.chars().all(|ch| ch.is_numeric()) {
         return false;
     }
-    !COMMON_CAPITALISED.contains(&c.to_lowercase().as_str())
+    let lower = c.to_lowercase();
+    if COMMON_CAPITALISED.contains(&lower.as_str()) {
+        return false;
+    }
+    // A contraction of a common word is still that common word. `core` only
+    // strips punctuation from the *ends*, so "I'm" arrives intact, and the
+    // stop-list holds "i" rather than every contraction of it — which is how
+    // "I'm" came to be offered as a name to add to the dictionary, 73 sightings
+    // deep.
+    //
+    // Matching on the stem rather than listing contractions covers I'm/I'll/
+    // I've/I'd, we're, they've, it's, that's, don't and the rest at once, in
+    // one rule instead of forty. Real names keep their apostrophes: the stem of
+    // "O'Brien" is "o" and of "D'Angelo" is "d", neither of which is a common
+    // word, so both still qualify.
+    //
+    // Both apostrophes are handled: speech-to-text emits the typographic U+2019
+    // at least as often as the ASCII one.
+    if let Some((stem, _)) = lower.split_once(['\'', '\u{2019}']) {
+        if COMMON_CAPITALISED.contains(&stem) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Is this token the first word of a sentence?
@@ -191,6 +214,52 @@ mod tests {
 
     fn corpus(lines: &[&str]) -> Vec<String> {
         lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// "I'm" was being offered as a name to add to the dictionary. `core` only
+    /// strips punctuation from the ends, so the contraction reached the
+    /// stop-list check intact and "i'm" is not "i".
+    #[test]
+    fn contractions_of_common_words_are_not_names() {
+        for word in ["I'm", "I've", "It's", "That's", "They're", "Don't"] {
+            assert!(
+                !looks_like_name_part(word),
+                "{word} should not be mined as a name"
+            );
+        }
+    }
+
+    /// The typographic apostrophe speech-to-text actually emits.
+    #[test]
+    fn curly_apostrophes_are_handled_too() {
+        assert!(!looks_like_name_part("I\u{2019}m"));
+        assert!(!looks_like_name_part("They\u{2019}re"));
+    }
+
+    /// Matching on the stem must not cost real names their apostrophes.
+    #[test]
+    fn apostrophes_in_real_names_survive() {
+        assert!(looks_like_name_part("O'Brien"));
+        assert!(looks_like_name_part("D'Angelo"));
+    }
+
+    /// The end-to-end shape of the bug: a transcript full of contractions
+    /// should mine the name and nothing else.
+    #[test]
+    fn mining_ignores_contractions_but_keeps_the_name() {
+        let terms = mine_candidates(
+            &corpus(&[
+                "I'm talking to Chidimma. I'm sure I've met Chidimma before.",
+                "I'm certain that's Chidimma.",
+            ]),
+            &[],
+        );
+        let mined: Vec<&str> = terms.iter().map(|t| t.term.as_str()).collect();
+        assert!(mined.contains(&"Chidimma"), "got {mined:?}");
+        assert!(
+            !mined.iter().any(|t| t.contains('\'')),
+            "no contraction should be offered: {mined:?}"
+        );
     }
 
     fn terms(candidates: &[TermCandidate]) -> Vec<&str> {

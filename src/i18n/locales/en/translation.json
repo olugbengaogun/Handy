@@ -501,6 +501,7 @@
       "previousPeriod": "Previous period",
       "nextPeriod": "Next period",
       "wordsPerWeek": "Words per week",
+      "weekOf": "week of {{date}}",
       "emptyPeriod": "Nothing dictated in this period.",
       "longestOnly": "Longest run {{longest}} days",
       "since": "Since {{date}}."

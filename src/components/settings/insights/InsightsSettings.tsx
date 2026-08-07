@@ -327,6 +327,17 @@ export const InsightsSettings: React.FC = () => {
                     peakLabel={(n) =>
                       t("settings.insights.peak", { words: words(n) })
                     }
+                    dateLabel={
+                      weekly
+                        ? (day, loc) =>
+                            t("settings.insights.weekOf", {
+                              date: fromDayKey(day).toLocaleDateString(loc, {
+                                month: "short",
+                                day: "numeric",
+                              }),
+                            })
+                        : undefined
+                    }
                   />
                 </Panel>
                 <div className="bg-mid-gray/[0.07] border border-mid-gray/20 rounded-xl px-4 py-3 flex items-center justify-center">

@@ -84,7 +84,17 @@ export const WordsPerDayChart: React.FC<{
   emptyLabel: string;
   unitLabel: (n: number) => string;
   peakLabel: (n: number) => string;
-}> = ({ data, locale, emptyLabel, unitLabel, peakLabel }) => {
+  /** Renders a bucket's date. Weekly buckets say "week of …", because a bar
+   *  covering seven days labelled with one of them is a wrong answer. */
+  dateLabel?: (day: string, locale: string) => string;
+}> = ({
+  data,
+  locale,
+  emptyLabel,
+  unitLabel,
+  peakLabel,
+  dateLabel = formatDay,
+}) => {
   const [hover, setHover] = useState<number | null>(null);
   const max = useMemo(() => Math.max(1, ...data.map((d) => d.words)), [data]);
   const total = useMemo(() => data.reduce((s, d) => s + d.words, 0), [data]);
@@ -118,8 +128,8 @@ export const WordsPerDayChart: React.FC<{
               // Tooltips enhance, they never gate: the same value is on the
               // element itself, so keyboard and screen-reader users reach it
               // without a pointer.
-              title={`${unitLabel(d.words)} · ${formatDay(d.day, locale)}`}
-              aria-label={`${unitLabel(d.words)} · ${formatDay(d.day, locale)}`}
+              title={`${unitLabel(d.words)} · ${dateLabel(d.day, locale)}`}
+              aria-label={`${unitLabel(d.words)} · ${dateLabel(d.day, locale)}`}
               onMouseEnter={() => setHover(i)}
               onFocus={() => setHover(i)}
               onBlur={() => setHover(null)}
@@ -160,7 +170,7 @@ export const WordsPerDayChart: React.FC<{
             </span>
             <span className="text-text/50">
               {" · "}
-              {formatDay(data[hover].day, locale)}
+              {dateLabel(data[hover].day, locale)}
             </span>
           </div>
         </div>
