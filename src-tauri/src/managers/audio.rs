@@ -433,6 +433,7 @@ struct MuteState {
 fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
+    selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
@@ -457,6 +458,7 @@ fn create_audio_recorder(
             VAD_OFFLINE_HANGOVER_FRAMES,
             VAD_STREAMING_HANGOVER_FRAMES,
         )
+        .with_selected_channel(selected_channel)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -706,9 +708,11 @@ impl AudioRecordingManager {
                     tauri::path::BaseDirectory::Resource,
                 )
                 .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
+            let settings = get_settings(&self.app_handle);
             *recorder_opt = Some(create_audio_recorder(
                 &vad_path,
                 &self.app_handle,
+                settings.selected_channel,
                 Arc::clone(&self.stream_router),
             )?);
         }
@@ -928,10 +932,9 @@ impl AudioRecordingManager {
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
-        // Device settings changed; drop the cached resolution so the next
-        // open re-enumerates. (The name-keyed cache would miss anyway; this
-        // just avoids holding a stale cpal::Device alive.)
+        // Device settings changed; re-enumerate the device and restart capture.
         self.invalidate_device_cache();
+<<<<<<< HEAD
         // If currently open, restart the microphone stream to use the new device
         if *self.is_open.lock().unwrap() {
             // stop_microphone_stream unmutes as a safety net. If that mute belongs
@@ -940,6 +943,10 @@ impl AudioRecordingManager {
             // in for the rest of the take. apply_mute re-snapshots the now-restored
             // system state, so the eventual remove_mute still lands correctly.
             let restore_mute_after_restart = self.mute_is_active();
+=======
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+>>>>>>> upstream/main
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
             self.start_microphone_stream()?;
@@ -952,6 +959,41 @@ impl AudioRecordingManager {
                 self.apply_mute();
             }
         }
+        Ok(())
+    }
+
+    pub fn update_selected_channel(
+        &self,
+        selected_channel: Option<u16>,
+    ) -> Result<(), anyhow::Error> {
+        // Serialize against recording start/stop. Restarting an active capture
+        // would discard its samples and leave the manager's recording state out
+        // of sync with the new recorder.
+        let state = self.state.lock().unwrap();
+        if !matches!(*state, RecordingState::Idle) {
+            return Err(anyhow::anyhow!(
+                "Cannot change the input channel while recording"
+            ));
+        }
+
+        let previous_channel = get_settings(&self.app_handle).selected_channel;
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+        if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+            recorder.set_selected_channel(selected_channel);
+        }
+        if was_open {
+            if let Err(error) = self.start_microphone_stream() {
+                if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+                    recorder.set_selected_channel(previous_channel);
+                }
+                return Err(error);
+            }
+        }
+        drop(state);
         Ok(())
     }
 

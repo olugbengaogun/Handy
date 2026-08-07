@@ -165,7 +165,9 @@
       "deleteActiveConfirm": "{{modelName}} est votre modèle actif. Le supprimer arrêtera les transcriptions jusqu'à ce que vous sélectionniez un nouveau modèle. Êtes-vous sûr ?",
       "deleteTitle": "Supprimer le modèle",
       "filters": {
-        "allLanguages": "Toutes les langues"
+        "allLanguages": "Toutes les langues",
+        "streaming": "Filtrer les modèles prenant en charge la transcription en direct",
+        "translation": "Filtrer les modèles prenant en charge la traduction vers l'anglais"
       },
       "noModelsMatch": "Aucun modèle ne correspond à ce filtre.",
       "yourModels": "Modèles téléchargés",
@@ -224,6 +226,12 @@
         "description": "Sélectionnez votre périphérique d'entrée audio",
         "placeholder": "Sélectionner un microphone...",
         "loading": "Chargement..."
+      },
+      "channel": {
+        "title": "Canal d’entrée",
+        "description": "Sélectionnez le canal d’entrée à enregistrer. Utilisez cette option si votre interface audio possède plusieurs entrées.",
+        "average": "Moyenne de tous les canaux",
+        "channel": "Canal {{n}}"
       },
       "audioFeedback": {
         "label": "Signal sonore",

@@ -165,7 +165,9 @@
       "deleteActiveConfirm": "{{modelName}} 是您当前使用的模型。删除后将停止转录，直到您选择新的模型。确定要删除吗？",
       "deleteTitle": "删除模型",
       "filters": {
-        "allLanguages": "所有语言"
+        "allLanguages": "所有语言",
+        "streaming": "筛选支持实时转录的模型",
+        "translation": "筛选支持翻译为英语的模型"
       },
       "noModelsMatch": "没有符合此筛选条件的模型。",
       "yourModels": "已下载的模型",
@@ -224,6 +226,12 @@
         "description": "选择您偏好的麦克风设备",
         "placeholder": "选择麦克风...",
         "loading": "加载中..."
+      },
+      "channel": {
+        "title": "输入通道",
+        "description": "选择要录制的输入通道。如果您的音频接口有多个输入，请使用此选项。",
+        "average": "所有通道的平均值",
+        "channel": "通道 {{n}}"
       },
       "audioFeedback": {
         "label": "音频反馈",

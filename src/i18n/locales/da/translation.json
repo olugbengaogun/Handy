@@ -209,7 +209,9 @@
       "deleteActiveConfirm": "{{modelName}} er din aktive model. Sletning af den vil stoppe transskriptioner, indtil du vælger en ny model. Er du sikker?",
       "deleteTitle": "Slet model",
       "filters": {
-        "allLanguages": "Alle sprog"
+        "allLanguages": "Alle sprog",
+        "streaming": "Filtrer modeller, der understøtter live transskription",
+        "translation": "Filtrer modeller, der understøtter oversættelse til engelsk"
       },
       "rescan": {
         "label": "Søg igen",
@@ -224,6 +226,12 @@
         "description": "Vælg din foretrukne mikrofonenhed",
         "placeholder": "Vælg mikrofon...",
         "loading": "Indlæser..."
+      },
+      "channel": {
+        "title": "Inputkanal",
+        "description": "Vælg, hvilken inputkanal der skal optages fra. Brug dette, hvis din lydgrænseflade har flere indgange.",
+        "average": "Gennemsnit af alle kanaler",
+        "channel": "Kanal {{n}}"
       },
       "audioFeedback": {
         "label": "Lydfeedback",

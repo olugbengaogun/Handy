@@ -209,7 +209,9 @@
       "deleteActiveConfirm": "{{modelName}} is je actieve model. Als je dit verwijdert, stoppen de transcripties totdat je een nieuw model selecteert. Weet je het zeker?",
       "deleteTitle": "Model verwijderen",
       "filters": {
-        "allLanguages": "Alle talen"
+        "allLanguages": "Alle talen",
+        "streaming": "Filter modellen die live transcriptie ondersteunen",
+        "translation": "Filter modellen die vertaling naar het Engels ondersteunen"
       },
       "rescan": {
         "label": "Opnieuw scannen",
@@ -224,6 +226,12 @@
         "description": "Selecteer de gewenste microfoon",
         "placeholder": "Microfoon selecteren...",
         "loading": "Laden..."
+      },
+      "channel": {
+        "title": "Ingangskanaal",
+        "description": "Selecteer het ingangskanaal waarvan moet worden opgenomen. Gebruik dit als je audio-interface meerdere ingangen heeft.",
+        "average": "Gemiddelde van alle kanalen",
+        "channel": "Kanaal {{n}}"
       },
       "audioFeedback": {
         "label": "Geluidsfeedback",

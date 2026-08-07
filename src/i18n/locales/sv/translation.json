@@ -208,7 +208,9 @@
       "deleteActiveConfirm": "{{modelName}} är din aktiva modell. Om du tar bort den avbryts transkriptioner tills du väljer en ny modell. Är du säker?",
       "deleteTitle": "Ta bort modell",
       "filters": {
-        "allLanguages": "Alla språk"
+        "allLanguages": "Alla språk",
+        "streaming": "Filtrera modeller som stöder transkription i realtid",
+        "translation": "Filtrera modeller som stöder översättning till engelska"
       },
       "noModelsMatch": "Inga modeller matchar detta filter.",
       "searchPlaceholder": "Sök modeller efter namn…",
@@ -224,6 +226,12 @@
         "description": "Välj din föredragna mikrofonenhet",
         "placeholder": "Välj mikrofon...",
         "loading": "Laddar..."
+      },
+      "channel": {
+        "title": "Ingångskanal",
+        "description": "Välj vilken ingångskanal du vill spela in från. Använd detta om ditt ljudgränssnitt har flera ingångar.",
+        "average": "Medelvärde av alla kanaler",
+        "channel": "Kanal {{n}}"
       },
       "audioFeedback": {
         "label": "Ljudåterkoppling",
