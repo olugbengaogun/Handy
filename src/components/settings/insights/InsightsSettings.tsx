@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { commands, type DailyUsage } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { Alert } from "../../ui/Alert";
 import { StreakGrid, WordsPerDayChart, WpmGauge } from "./charts";
 import {
   canGoBack,
@@ -124,6 +125,7 @@ export const InsightsSettings: React.FC = () => {
   /** True during any load. Switching period dims the current render instead of
    *  flashing a skeleton, so the figures stay readable and nothing jumps. */
   const [refreshing, setRefreshing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const bounds = useMemo(() => periodBounds(period, locale), [period, locale]);
 
@@ -147,13 +149,31 @@ export const InsightsSettings: React.FC = () => {
           commands.getUsageRange(toDayKey(streakStart), toDayKey(bounds.end)),
         ]);
         if (cancelled) return;
-        if (main.status === "ok") {
-          setDays(main.data.days);
-          setFirstRecorded(main.data.first_recorded);
+        // A failure must not leave the previous period's figures sitting under
+        // the new period's label — that is the panel telling you August's
+        // numbers are July's. Better to say nothing than to say something
+        // wrong.
+        if (main.status === "error" || streak.status === "error") {
+          const detail =
+            main.status === "error"
+              ? main.error
+              : (streak as { error: string }).error;
+          console.error("Failed to load usage stats:", detail);
+          setError(String(detail));
+          setDays([]);
+          setStreakSeries([]);
+          return;
         }
-        if (streak.status === "ok") setStreakSeries(streak.data.days);
-      } catch (error) {
-        console.error("Failed to load usage stats:", error);
+        setError(null);
+        setDays(main.data.days);
+        setFirstRecorded(main.data.first_recorded);
+        setStreakSeries(streak.data.days);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("Failed to load usage stats:", e);
+        setError(String(e));
+        setDays([]);
+        setStreakSeries([]);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -260,7 +280,9 @@ export const InsightsSettings: React.FC = () => {
             )}
           </div>
 
-          {loading ? (
+          {error ? (
+            <Alert variant="error">{error}</Alert>
+          ) : loading ? (
             <div className="text-sm text-text/60 py-6">
               {t("settings.insights.loading")}
             </div>

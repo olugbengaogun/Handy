@@ -128,6 +128,23 @@ static MIGRATIONS: &[M] = &[
     ),
 ];
 
+/// Shared connection setup for every handle onto `history.db`.
+///
+/// Every method here opens its own connection, and `managers::learning` opens
+/// the *same file* for the correction loop — so a transcription being filed
+/// while a correction is recorded, or while the Insights panel reads, is two
+/// connections contending for one database. SQLite's default `busy_timeout` is
+/// zero: the loser of that race fails instantly with SQLITE_BUSY rather than
+/// waiting the few milliseconds the other write needs.
+///
+/// Five seconds is far longer than any statement here takes and turns a lost
+/// race into a short wait instead of a dropped transcript or an error toast.
+/// Applied at open, because the timeout is per-connection, not per-database.
+pub(crate) fn configure_connection(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct PaginatedHistory {
     pub entries: Vec<HistoryEntry>,
@@ -316,7 +333,9 @@ impl HistoryManager {
     }
 
     fn get_connection(&self) -> Result<Connection> {
-        Ok(Connection::open(&self.db_path)?)
+        let conn = Connection::open(&self.db_path)?;
+        configure_connection(&conn)?;
+        Ok(conn)
     }
 
     fn map_history_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
@@ -905,11 +924,10 @@ impl HistoryManager {
         // The extremes of the whole record, which the UI needs regardless of the
         // window asked for: they decide how far back navigation may go, and
         // they resolve an open-ended "all time" start.
-        let (first_recorded, last_recorded): (Option<String>, Option<String>) = conn.query_row(
-            "SELECT MIN(day), MAX(day) FROM usage_daily",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        let (first_recorded, last_recorded): (Option<String>, Option<String>) =
+            conn.query_row("SELECT MIN(day), MAX(day) FROM usage_daily", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
 
         let today = Local::now().date_naive();
         let today_str = today.format("%Y-%m-%d").to_string();

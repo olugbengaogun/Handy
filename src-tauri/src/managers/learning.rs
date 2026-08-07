@@ -115,7 +115,11 @@ impl LearningManager {
     }
 
     fn connection(&self) -> Result<Connection> {
-        Ok(Connection::open(&self.db_path)?)
+        let conn = Connection::open(&self.db_path)?;
+        // Same file as `managers::history`, so the same contention applies —
+        // see `history::configure_connection`.
+        crate::managers::history::configure_connection(&conn)?;
+        Ok(conn)
     }
 
     /// Re-normalise every stored correction key through the current [`key_of`],
