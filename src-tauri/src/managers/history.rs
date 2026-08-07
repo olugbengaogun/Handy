@@ -141,6 +141,20 @@ pub struct DailyUsage {
     pub duration_secs: f64,
 }
 
+/// A window of daily usage plus the extremes of the whole record.
+///
+/// The bounds travel with the window because the UI needs both in the same
+/// paint: they decide whether the "previous period" arrow is still live, and
+/// they anchor an open-ended "all time" start.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct UsageRange {
+    pub days: Vec<DailyUsage>,
+    /// Earliest local day with any recorded dictation, if there is any.
+    pub first_recorded: Option<String>,
+    /// Latest local day with any recorded dictation, if there is any.
+    pub last_recorded: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum StatsRange {
@@ -846,23 +860,87 @@ impl HistoryManager {
         Ok(())
     }
 
-    /// Per-day totals for the last `days` local days, oldest first, with days
-    /// the user did not dictate returned as explicit zeroes.
+    /// Per-day totals between two local dates, inclusive, oldest first, with
+    /// days the user did not dictate returned as explicit zeroes.
     ///
     /// The gaps matter: a bar chart and a streak calendar are both *about* the
     /// empty days, and a caller left to infer them from missing keys will get
     /// the arithmetic wrong at a month boundary. Filling them here means one
     /// implementation of "what is a day" instead of one per consumer.
-    pub fn get_usage_daily(&self, days: i64) -> Result<Vec<DailyUsage>> {
-        let days = days.clamp(1, 366);
+    ///
+    /// This is deliberately the *only* read path for the Insights panel. The
+    /// tiles sum this same series rather than running their own aggregate
+    /// query, so a headline figure and the chart under it cannot disagree about
+    /// what the selected period contains.
+    pub fn get_usage_range(
+        &self,
+        start: Option<String>,
+        end: Option<String>,
+    ) -> Result<UsageRange> {
         let conn = self.get_connection()?;
-        let start = Self::local_day_offset(days - 1);
+        Self::usage_range_with(&conn, start, end)
+    }
+
+    /// The body of [`Self::get_usage_range`], against a caller-supplied
+    /// connection so the calendar arithmetic can be tested without a Tauri
+    /// AppHandle or a file on disk.
+    fn usage_range_with(
+        conn: &Connection,
+        start: Option<String>,
+        end: Option<String>,
+    ) -> Result<UsageRange> {
+        // The extremes of the whole record, which the UI needs regardless of the
+        // window asked for: they decide how far back navigation may go, and
+        // they resolve an open-ended "all time" start.
+        let (first_recorded, last_recorded): (Option<String>, Option<String>) = conn.query_row(
+            "SELECT MIN(day), MAX(day) FROM usage_daily",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let today = Local::now().date_naive();
+        let today_str = today.format("%Y-%m-%d").to_string();
+
+        // An absent start means "from the first day ever recorded", never a
+        // 1970 epoch: this function gap-fills, so an open start would
+        // materialise twenty thousand empty days to render a chart of four.
+        let start = start
+            .or_else(|| first_recorded.clone())
+            .unwrap_or_else(|| today_str.clone());
+        let end = end.unwrap_or_else(|| today_str.clone());
+
+        let parse = |s: &str| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d");
+        let start_date = parse(&start).map_err(|e| anyhow!("bad start day {start}: {e}"))?;
+        let end_date = parse(&end).map_err(|e| anyhow!("bad end day {end}: {e}"))?;
+
+        // An inverted range is a caller bug, not a reason to fail: return an
+        // empty series so the panel renders its empty state instead of an error
+        // toast the user can do nothing about.
+        if end_date < start_date {
+            return Ok(UsageRange {
+                days: Vec::new(),
+                first_recorded,
+                last_recorded,
+            });
+        }
+
+        // Hard ceiling on materialised rows. Ten years of daily squares is far
+        // past anything the UI draws, and it bounds the allocation whatever the
+        // caller asks for.
+        const MAX_DAYS: i64 = 3700;
+        let span = (end_date - start_date).num_days();
+        let start_date = if span >= MAX_DAYS {
+            end_date - chrono::Duration::days(MAX_DAYS - 1)
+        } else {
+            start_date
+        };
+        let start = start_date.format("%Y-%m-%d").to_string();
 
         let mut stmt = conn.prepare(
             "SELECT day, words, entries, duration_secs
-             FROM usage_daily WHERE day >= ?1",
+             FROM usage_daily WHERE day >= ?1 AND day <= ?2",
         )?;
-        let rows = stmt.query_map(params![start], |row| {
+        let rows = stmt.query_map(params![start, end], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
@@ -877,25 +955,25 @@ impl HistoryManager {
             found.insert(day, (words, entries, duration_secs));
         }
 
-        let today = Local::now().date_naive();
-        let series = (0..days)
-            .rev()
-            .map(|back| {
-                let day = (today - chrono::Duration::days(back))
-                    .format("%Y-%m-%d")
-                    .to_string();
-                let (words, entries, duration_secs) =
-                    found.get(&day).copied().unwrap_or((0, 0, 0.0));
-                DailyUsage {
-                    day,
-                    words,
-                    entries,
-                    duration_secs,
-                }
-            })
-            .collect();
+        let mut days = Vec::new();
+        let mut cursor = start_date;
+        while cursor <= end_date {
+            let day = cursor.format("%Y-%m-%d").to_string();
+            let (words, entries, duration_secs) = found.get(&day).copied().unwrap_or((0, 0, 0.0));
+            days.push(DailyUsage {
+                day,
+                words,
+                entries,
+                duration_secs,
+            });
+            cursor += chrono::Duration::days(1);
+        }
 
-        Ok(series)
+        Ok(UsageRange {
+            days,
+            first_recorded,
+            last_recorded,
+        })
     }
 
     /// The local date `days_ago` days before today, as the `YYYY-MM-DD` string
@@ -1133,6 +1211,16 @@ mod tests {
             .timestamp()
     }
 
+    fn fill_days(conn: &Connection, start: &str, end: &str) -> Vec<DailyUsage> {
+        HistoryManager::usage_range_with(
+            conn,
+            Some(start.to_string()),
+            Some(end.to_string()),
+        )
+        .expect("usage range")
+        .days
+    }
+
     fn sum_for(conn: &Connection, cutoff: Option<String>) -> (i64, i64) {
         conn.query_row(
             "SELECT COALESCE(SUM(words), 0), COALESCE(SUM(entries), 0)
@@ -1185,6 +1273,75 @@ mod tests {
         conn.execute("DELETE FROM transcription_history", [])
             .unwrap();
         assert_eq!(sum_for(&conn, None).0, 150);
+    }
+
+    /// Gap-filling has to survive the irregular bit of the calendar: a month
+    /// boundary. Feb 27 → Mar 2 is four days in 2026, and any implementation
+    /// that reasons in fixed-length months gets it wrong.
+    #[test]
+    fn range_gap_fills_across_a_month_boundary() {
+        let conn = usage_conn();
+        let days = fill_days(&conn, "2026-02-27", "2026-03-02");
+        assert_eq!(
+            days.iter().map(|d| d.day.as_str()).collect::<Vec<_>>(),
+            ["2026-02-27", "2026-02-28", "2026-03-01", "2026-03-02"]
+        );
+        assert!(days.iter().all(|d| d.entries == 0), "absent days read zero");
+    }
+
+    #[test]
+    fn range_of_one_day_returns_one_day() {
+        let conn = usage_conn();
+        let days = fill_days(&conn, "2026-08-07", "2026-08-07");
+        assert_eq!(days.len(), 1);
+        assert_eq!(days[0].day, "2026-08-07");
+    }
+
+    /// An inverted range is a caller bug. It must render an empty panel, not
+    /// raise an error the user can do nothing about.
+    #[test]
+    fn inverted_range_is_empty_not_an_error() {
+        let conn = usage_conn();
+        assert!(fill_days(&conn, "2026-08-07", "2026-08-01").is_empty());
+    }
+
+    /// "All time" sends no start. It must resolve to the first *recorded* day —
+    /// resolving it to the epoch would gap-fill twenty thousand empty rows to
+    /// draw a chart of three.
+    #[test]
+    fn open_start_resolves_to_the_first_recorded_day() {
+        let conn = usage_conn();
+        conn.execute(
+            "INSERT INTO usage_daily (day, words, entries, duration_secs)
+             VALUES ('2026-08-01', 10, 1, 6.0), ('2026-08-04', 20, 2, 12.0)",
+            [],
+        )
+        .unwrap();
+
+        let range = HistoryManager::usage_range_with(
+            &conn,
+            None,
+            Some("2026-08-05".to_string()),
+        )
+        .expect("usage range");
+
+        assert_eq!(range.first_recorded.as_deref(), Some("2026-08-01"));
+        assert_eq!(range.last_recorded.as_deref(), Some("2026-08-04"));
+        assert_eq!(range.days.len(), 5, "Aug 1..5 inclusive, gaps filled");
+        assert_eq!(range.days[0].day, "2026-08-01");
+        assert_eq!(range.days[1].words, 0, "Aug 2 was quiet");
+        assert_eq!(range.days[3].words, 20);
+    }
+
+    /// A database with no usage at all must not panic or invent a range.
+    #[test]
+    fn empty_database_reports_no_bounds() {
+        let conn = usage_conn();
+        let range = HistoryManager::usage_range_with(&conn, None, None).expect("usage range");
+        assert!(range.first_recorded.is_none());
+        assert!(range.last_recorded.is_none());
+        assert_eq!(range.days.len(), 1, "just today, empty");
+        assert_eq!(range.days[0].entries, 0);
     }
 
     /// Guards the DST trap: 30 calendar days back is not 30 * 86400 seconds.

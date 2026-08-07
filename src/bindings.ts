@@ -926,9 +926,9 @@ async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getUsageDaily(days: number) : Promise<Result<DailyUsage[], string>> {
+async getUsageRange(start: string | null, end: string | null) : Promise<Result<UsageRange, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_usage_daily", { days }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_usage_range", { start, end }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1313,6 +1313,18 @@ export type DailyUsage = {
  * Local calendar day, `YYYY-MM-DD`.
  */
 day: string; words: number; entries: number; duration_secs: number }
+/**
+ * A window of daily usage plus the extremes of the whole record.
+ */
+export type UsageRange = { days: DailyUsage[]; 
+/**
+ * Earliest local day with any recorded dictation, if there is any.
+ */
+first_recorded: string | null; 
+/**
+ * Latest local day with any recorded dictation, if there is any.
+ */
+last_recorded: string | null }
 export type UsageStats = { total_words: number; total_entries: number; total_duration_secs: number; average_wpm: number }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 

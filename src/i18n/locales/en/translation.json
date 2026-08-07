@@ -481,7 +481,7 @@
       "averageWpm": "words per minute",
       "totalRecordings": "Recordings",
       "timeSpeaking": "Time Speaking",
-      "wordsPerDay": "Words per day · last {{days}} days",
+      "wordsPerDay": "Words per day",
       "wordsCount": "{{count}} word",
       "wordsCount_other": "{{count}} words",
       "peak": "peak {{words}}",
@@ -490,11 +490,25 @@
       "less": "Less",
       "more": "More",
       "footnote": "Counted on your Mac from your own history, and kept even after old transcripts are cleared.",
+      "today": "Today",
+      "kind": {
+        "day": "Day",
+        "week": "Week",
+        "month": "Month",
+        "year": "Year",
+        "all": "All time"
+      },
+      "previousPeriod": "Previous period",
+      "nextPeriod": "Next period",
+      "wordsPerWeek": "Words per week",
+      "emptyPeriod": "Nothing dictated in this period.",
+      "longestOnly": "Longest run {{longest}} days",
+      "since": "Since {{date}}.",
       "range": {
         "today": "Today",
         "week": "This Week",
         "month": "This Month",
-        "allTime": "All Time"
+        "allTime": "All time"
       }
     },
     "debug": {

@@ -1,6 +1,6 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
-    history::{DailyUsage, HistoryManager, PaginatedHistory, StatsRange, UsageStats},
+    history::{HistoryManager, PaginatedHistory, StatsRange, UsageRange, UsageStats},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
@@ -193,17 +193,22 @@ pub async fn get_usage_stats(
         .map_err(|e| e.to_string())
 }
 
-/// Per-day dictation totals for the trend chart and streak calendar, oldest
-/// first, with empty days included as zeroes.
+/// Per-day dictation totals between two local `YYYY-MM-DD` dates, inclusive,
+/// oldest first, with empty days included as zeroes. An absent `start` means
+/// "from the first day ever recorded"; an absent `end` means today.
+///
+/// The single read path behind the Insights panel — tiles, chart and streak
+/// grid all derive from this one series.
 #[tauri::command]
 #[specta::specta]
-pub async fn get_usage_daily(
+pub async fn get_usage_range(
     _app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
-    days: i64,
-) -> Result<Vec<DailyUsage>, String> {
+    start: Option<String>,
+    end: Option<String>,
+) -> Result<UsageRange, String> {
     history_manager
-        .get_usage_daily(days)
+        .get_usage_range(start, end)
         .map_err(|e| e.to_string())
 }
 
