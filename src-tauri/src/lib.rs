@@ -168,6 +168,20 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let history_manager =
         Arc::new(HistoryManager::new(app_handle).expect("Failed to initialize history manager"));
 
+    // Must follow HistoryManager::new, which owns the only migration runner over
+    // history.db and therefore creates the schema_meta table this depends on.
+    // Best-effort: a failure here leaves correction counts split across the old
+    // and new key formats - a degraded suggestion list, not a broken app - and
+    // is not worth refusing to start over.
+    match managers::learning::LearningManager::new(app_handle) {
+        Ok(learning) => {
+            if let Err(e) = learning.migrate_keys() {
+                log::warn!("Could not re-key learning events: {e}");
+            }
+        }
+        Err(e) => log::warn!("Learning loop unavailable at startup: {e}"),
+    }
+
     // Initialize the transcribe-cpp native backend (logging + backend module
     // registration) once, before any whisper model is loaded.
     managers::transcription::init_transcribe_backend();
@@ -1018,7 +1032,32 @@ pub fn run(cli_args: CliArgs) {
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }
+                // Settings are written with `store.set()` and persisted on a
+                // 100 ms autosave debounce, so a change made just before quitting
+                // is still in memory at this point. Push it to disk while we
+                // still can. This fires on the relaunch path too, so an update
+                // can no longer swallow the user's last setting either.
+                settings::flush_settings(app);
             }
             _ => {}
         });
+
+    // Leaving `main()` normally is what crashes this app on quit. The C runtime
+    // then runs the native transcription libraries' static destructors, one of
+    // which calls abort() - macOS reports a crash for a quit the user asked for:
+    //
+    //     dyld start -> exit -> __cxa_finalize_ranges -> <handy> -> abort()
+    //
+    // Nothing above needs those destructors: the model is unloaded in the Exit
+    // arm, settings are flushed there, and SQLite has committed per transaction.
+    // So end the process before the C runtime gets a turn.
+    //
+    // Deliberately placed *after* `.run()` returns rather than inside the Exit
+    // arm. `relaunch()` (UpdateChecker.tsx) spawns the replacement process and
+    // terminates this one from inside Tauri, so `.run()` never returns and this
+    // line never executes. Putting the exit in the Exit arm instead would race
+    // that spawn and could leave a user who just installed an update with no
+    // running app. This placement makes auto-update safe by construction rather
+    // than by a flag someone has to remember to maintain.
+    std::process::exit(0);
 }

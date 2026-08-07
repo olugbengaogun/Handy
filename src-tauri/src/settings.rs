@@ -1,4 +1,4 @@
-use log::{debug, warn};
+use log::{debug, error, warn};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
@@ -1151,6 +1151,28 @@ fn apply_settings_migrations(
     }
 
     updated
+}
+
+/// Force the settings store to disk *now*, rather than on its autosave timer.
+///
+/// Nothing in this file ever calls `store.save()`: every write is a bare
+/// `store.set()`, and tauri-plugin-store persists those on a **100 ms debounce**.
+/// That is invisible in normal use and fatal at shutdown - a setting changed in
+/// the last tenth of a second before quitting is discarded, and a process that
+/// dies mid-debounce can leave the file half-written.
+///
+/// Called from the exit teardown in `lib.rs`, which is also the only reason the
+/// hard `process::exit` there is safe: it skips the plugin's own Drop, so this
+/// is what actually gets the user's last change onto disk.
+pub fn flush_settings(app: &AppHandle) {
+    match app.store(crate::portable::store_path(SETTINGS_STORE_PATH)) {
+        Ok(store) => {
+            if let Err(e) = store.save() {
+                error!("Failed to flush settings to disk on exit: {e}");
+            }
+        }
+        Err(e) => error!("Settings store unavailable at exit, changes may be lost: {e}"),
+    }
 }
 
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
