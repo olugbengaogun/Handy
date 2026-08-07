@@ -420,7 +420,33 @@ jobs:
           BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git push origin "$BRANCH"
-          gh pr create \
+
+          # The push above is the part that matters: the collision is now
+          # preserved on a branch where a human can resolve it, and main was
+          # never touched. Opening the PR is a *notification*, so it must not be
+          # able to fail the job.
+          #
+          # On 2026-08-07 it did. SYNC_PAT lacked the Pull requests permission,
+          # `gh pr create` returned "Resource not accessible by personal access
+          # token", and the step exited non-zero - reporting the whole sync as
+          # failed even though it had done its job perfectly. Worse, the failure
+          # arrived as an alarm about the safety net rather than a prompt to
+          # resolve the conflict, which is the opposite of what this is for.
+          if ! gh pr create \
             --title "Upstream sync needs a look ($REASON)" \
             --body "Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`." \
-            --base main --head "$BRANCH"
+            --base main --head "$BRANCH"; then
+            {
+              echo "### Upstream sync needs a look"
+              echo
+              echo "Reason: **$REASON**"
+              echo
+              echo "The branch \`$BRANCH\` was pushed successfully, but the PR"
+              echo "could not be opened automatically - most likely SYNC_PAT is"
+              echo "missing the **Pull requests: read and write** permission."
+              echo
+              echo "Open it by hand:"
+              echo "https://github.com/${GITHUB_REPOSITORY}/pull/new/$BRANCH"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Branch $BRANCH pushed, but the PR could not be opened. See the run summary."
+          fi

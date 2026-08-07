@@ -658,7 +658,14 @@ mod tests {
     fn rekey_lets_a_dismissal_outrank_a_pending_row() {
         let mut conn = test_db();
         meta_table(&conn);
-        seed(&conn, "Grandmaster", "Grant Master", 3, status::DISMISSED, 10);
+        seed(
+            &conn,
+            "Grandmaster",
+            "Grant Master",
+            3,
+            status::DISMISSED,
+            10,
+        );
         seed(
             &conn,
             "grandmaster,",
@@ -681,7 +688,14 @@ mod tests {
     fn rekey_lets_active_outrank_dismissed() {
         let mut conn = test_db();
         meta_table(&conn);
-        seed(&conn, "Grandmaster", "Grant Master", 1, status::DISMISSED, 10);
+        seed(
+            &conn,
+            "Grandmaster",
+            "Grant Master",
+            1,
+            status::DISMISSED,
+            10,
+        );
         seed(
             &conn,
             "grandmaster,",
