@@ -137,7 +137,12 @@ export const InsightsSettings: React.FC = () => {
 
   const words = (n: number) => t("settings.insights.wordsCount", { count: n });
 
-  const hasData = stats !== null && stats.total_entries > 0;
+  // Keyed off the whole record, not the selected range. Otherwise picking
+  // "Today" before saying anything blanks the entire panel - including the
+  // streak grid, which is about every other day and has plenty to show. A
+  // quiet morning should read as zeroes, not as an app with no history.
+  const hasAnyHistory = streakSeries.some((d) => d.entries > 0);
+  const hasData = stats !== null && (stats.total_entries > 0 || hasAnyHistory);
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
