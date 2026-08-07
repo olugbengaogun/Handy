@@ -1119,7 +1119,8 @@ mod tests {
 
         // Pruning the history must not move any of these numbers - that
         // dependency is exactly what made "all time" a falsehood.
-        conn.execute("DELETE FROM transcription_history", []).unwrap();
+        conn.execute("DELETE FROM transcription_history", [])
+            .unwrap();
         assert_eq!(sum_for(&conn, None).0, 150);
     }
 
