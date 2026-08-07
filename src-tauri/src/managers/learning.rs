@@ -622,10 +622,8 @@ mod tests {
     }
 
     fn meta_table(conn: &Connection) {
-        conn.execute_batch(
-            "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
-        )
-        .expect("schema_meta");
+        conn.execute_batch("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .expect("schema_meta");
     }
 
     #[test]
@@ -633,7 +631,14 @@ mod tests {
         let mut conn = test_db();
         meta_table(&conn);
         seed(&conn, "Grandmaster", "Grant Master", 1, status::PENDING, 10);
-        seed(&conn, "grandmaster,", "Grant Master,", 1, status::PENDING, 20);
+        seed(
+            &conn,
+            "grandmaster,",
+            "Grant Master,",
+            1,
+            status::PENDING,
+            20,
+        );
 
         LearningManager::migrate_keys_with(&mut conn).expect("rekey");
 
@@ -654,7 +659,14 @@ mod tests {
         let mut conn = test_db();
         meta_table(&conn);
         seed(&conn, "Grandmaster", "Grant Master", 3, status::DISMISSED, 10);
-        seed(&conn, "grandmaster,", "Grant Master,", 1, status::PENDING, 20);
+        seed(
+            &conn,
+            "grandmaster,",
+            "Grant Master,",
+            1,
+            status::PENDING,
+            20,
+        );
 
         LearningManager::migrate_keys_with(&mut conn).expect("rekey");
 
@@ -670,7 +682,14 @@ mod tests {
         let mut conn = test_db();
         meta_table(&conn);
         seed(&conn, "Grandmaster", "Grant Master", 1, status::DISMISSED, 10);
-        seed(&conn, "grandmaster,", "Grant Master,", 1, status::ACTIVE, 20);
+        seed(
+            &conn,
+            "grandmaster,",
+            "Grant Master,",
+            1,
+            status::ACTIVE,
+            20,
+        );
 
         LearningManager::migrate_keys_with(&mut conn).expect("rekey");
 
@@ -685,7 +704,14 @@ mod tests {
         let mut conn = test_db();
         meta_table(&conn);
         seed(&conn, "Grandmaster", "Grant Master", 1, status::PENDING, 10);
-        seed(&conn, "grandmaster,", "Grant Master,", 1, status::PENDING, 20);
+        seed(
+            &conn,
+            "grandmaster,",
+            "Grant Master,",
+            1,
+            status::PENDING,
+            20,
+        );
 
         LearningManager::migrate_keys_with(&mut conn).expect("first");
         // A second pass must not double-count the already-merged occurrences.
