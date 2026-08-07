@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { commands, type StatsRange, type UsageStats } from "@/bindings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 
-const RANGES: StatsRange[] = ["week", "month", "all_time"];
+const RANGES: StatsRange[] = ["today", "week", "month", "all_time"];
 
 const StatTile: React.FC<{ label: string; value: string }> = ({
   label,

@@ -83,6 +83,45 @@ static MIGRATIONS: &[M] = &[
             value TEXT NOT NULL
         );",
     ),
+    // Usage stats used to be computed by scanning transcription_history, which
+    // made them quietly false. `cleanup_by_count` keeps only the newest
+    // `history_limit` unsaved rows, so that table is a rolling window, not a
+    // history: past a few days of real use, "this week", "this month" and "all
+    // time" all read the same surviving rows and return identical numbers. The
+    // Insights panel was not broken - it was faithfully reporting a table that
+    // had been deleted underneath it.
+    //
+    // This aggregate is never pruned. One row per day is ~366 rows a year, so
+    // there is nothing to reclaim, and the numbers stop depending on a retention
+    // setting that has nothing to do with them.
+    //
+    // `day` is a LOCAL date, computed once at write time and then frozen. A
+    // stored string rather than a derived one: recomputing the bucket later
+    // would silently reshuffle history when the user changes timezone, and a
+    // streak that moves because someone took a flight is worse than no streak.
+    M::up(
+        "CREATE TABLE IF NOT EXISTS usage_daily (
+            day TEXT PRIMARY KEY,
+            words INTEGER NOT NULL DEFAULT 0,
+            entries INTEGER NOT NULL DEFAULT 0,
+            duration_secs REAL NOT NULL DEFAULT 0,
+            corrections INTEGER NOT NULL DEFAULT 0
+        );
+        -- Backfill from whatever pruning has left, so nobody upgrades into an
+        -- empty panel. This can only recover surviving rows; it is the last
+        -- moment the old data is worth anything, and from here the aggregate
+        -- accumulates properly. SQLite's 'localtime' matches the chrono::Local
+        -- bucketing used for new rows.
+        INSERT OR IGNORE INTO usage_daily (day, words, entries, duration_secs, corrections)
+            SELECT date(timestamp, 'unixepoch', 'localtime'),
+                   COALESCE(SUM(word_count), 0),
+                   COUNT(*),
+                   COALESCE(SUM(duration_secs), 0.0),
+                   0
+            FROM transcription_history
+            WHERE transcription_text != ''
+            GROUP BY 1;",
+    ),
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -94,6 +133,11 @@ pub struct PaginatedHistory {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum StatsRange {
+    /// New in this change. Safe to add anywhere: the wire format is
+    /// `snake_case` by name (`"today"`), never an ordinal, so the existing
+    /// variants keep serialising exactly as before and an older frontend that
+    /// never sends "today" is unaffected.
+    Today,
     Week,
     Month,
     AllTime,
@@ -306,8 +350,9 @@ impl HistoryManager {
         let title = self.format_timestamp_title(timestamp);
         let word_count = transcription_text.split_whitespace().count() as i64;
 
-        let conn = self.get_connection()?;
-        conn.execute(
+        let mut conn = self.get_connection()?;
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO transcription_history (
                 file_name,
                 timestamp,
@@ -336,8 +381,22 @@ impl HistoryManager {
             ],
         )?;
 
+        // In the same transaction as the row it summarises, so the aggregate can
+        // never drift from the history by a half-applied write.
+        //
+        // Insert-time only. A later hand-edit recomputes word_count on the
+        // history row but deliberately does not touch this: the aggregate
+        // records what was dictated that day, and correcting a transcript does
+        // not change what was said.
+        if !transcription_text.trim().is_empty() {
+            Self::record_daily_usage(&tx, timestamp, word_count, duration_secs)?;
+        }
+
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+
         let entry = HistoryEntry {
-            id: conn.last_insert_rowid(),
+            id,
             file_name,
             timestamp,
             saved: false,
@@ -747,21 +806,67 @@ impl HistoryManager {
         Ok(entry)
     }
 
-    /// Aggregate word/duration/entry-count stats over a time range, computed
-    /// in SQL rather than by paginating the full table client-side.
+    /// Add one transcription to its local day's running totals.
+    ///
+    /// The day is derived from the entry's own timestamp rather than "now", so a
+    /// recording that finishes transcribing just after midnight still counts
+    /// toward the day it was spoken.
+    fn record_daily_usage(
+        conn: &Connection,
+        timestamp: i64,
+        word_count: i64,
+        duration_secs: f64,
+    ) -> Result<()> {
+        let day = DateTime::from_timestamp(timestamp, 0)
+            .ok_or_else(|| anyhow!("timestamp {timestamp} is out of range"))?
+            .with_timezone(&Local)
+            .format("%Y-%m-%d")
+            .to_string();
+
+        conn.execute(
+            "INSERT INTO usage_daily (day, words, entries, duration_secs, corrections)
+             VALUES (?1, ?2, 1, ?3, 0)
+             ON CONFLICT (day) DO UPDATE SET
+                words = words + excluded.words,
+                entries = entries + 1,
+                duration_secs = duration_secs + excluded.duration_secs",
+            params![day, word_count, duration_secs],
+        )?;
+        Ok(())
+    }
+
+    /// The local date `days_ago` days before today, as the `YYYY-MM-DD` string
+    /// used by `usage_daily.day`.
+    ///
+    /// Calendar arithmetic on local dates, not `now - N * 86400`: subtracting
+    /// seconds crosses a DST boundary an hour early or late, which on the wrong
+    /// day silently includes or drops a whole day of usage.
+    fn local_day_offset(days_ago: i64) -> String {
+        (Local::now().date_naive() - chrono::Duration::days(days_ago))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    /// Aggregate word/duration/entry-count stats over a time range.
+    ///
+    /// Reads `usage_daily`, not `transcription_history`. The history table is
+    /// pruned to `history_limit` rows, so summing it made every range converge
+    /// on the same answer once a user dictated more than that window held - see
+    /// the `usage_daily` migration.
     pub fn get_usage_stats(&self, range: StatsRange) -> Result<UsageStats> {
         let conn = self.get_connection()?;
-        let now = Utc::now().timestamp();
+        // Inclusive lower bound on the local day, or None for all time.
         let cutoff = match range {
-            StatsRange::Week => Some(now - 7 * 24 * 60 * 60),
-            StatsRange::Month => Some(now - 30 * 24 * 60 * 60),
+            StatsRange::Today => Some(Self::local_day_offset(0)),
+            StatsRange::Week => Some(Self::local_day_offset(6)),
+            StatsRange::Month => Some(Self::local_day_offset(29)),
             StatsRange::AllTime => None,
         };
 
-        let query =
-            "SELECT COALESCE(SUM(word_count), 0), COUNT(*), COALESCE(SUM(duration_secs), 0.0)
-             FROM transcription_history
-             WHERE transcription_text != '' AND (?1 IS NULL OR timestamp >= ?1)";
+        let query = "SELECT COALESCE(SUM(words), 0), COALESCE(SUM(entries), 0),
+                            COALESCE(SUM(duration_secs), 0.0)
+                     FROM usage_daily
+                     WHERE (?1 IS NULL OR day >= ?1)";
 
         let (total_words, total_entries, total_duration_secs): (i64, i64, f64) =
             conn.query_row(query, params![cutoff], |row| {
@@ -937,6 +1042,98 @@ mod tests {
         )
         .expect("create transcription_history table");
         conn
+    }
+
+    fn usage_conn() -> Connection {
+        let conn = setup_conn();
+        conn.execute_batch(
+            "CREATE TABLE usage_daily (
+                day TEXT PRIMARY KEY,
+                words INTEGER NOT NULL DEFAULT 0,
+                entries INTEGER NOT NULL DEFAULT 0,
+                duration_secs REAL NOT NULL DEFAULT 0,
+                corrections INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .expect("create usage_daily");
+        conn
+    }
+
+    /// A local-midnight timestamp `days_ago` days back, so a row lands in the
+    /// day bucket the test means regardless of the machine's timezone.
+    fn ts_days_ago(days_ago: i64) -> i64 {
+        (Local::now().date_naive() - chrono::Duration::days(days_ago))
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .timestamp()
+    }
+
+    fn sum_for(conn: &Connection, cutoff: Option<String>) -> (i64, i64) {
+        conn.query_row(
+            "SELECT COALESCE(SUM(words), 0), COALESCE(SUM(entries), 0)
+             FROM usage_daily WHERE (?1 IS NULL OR day >= ?1)",
+            params![cutoff],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("sum usage_daily")
+    }
+
+    #[test]
+    fn daily_usage_buckets_by_local_day_and_accumulates() {
+        let conn = usage_conn();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(0), 100, 60.0).unwrap();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(0), 50, 30.0).unwrap();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(10), 7, 5.0).unwrap();
+
+        let days: i64 = conn
+            .query_row("SELECT COUNT(*) FROM usage_daily", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(days, 2, "two distinct local days");
+
+        let (words, entries) = sum_for(&conn, Some(HistoryManager::local_day_offset(0)));
+        assert_eq!((words, entries), (150, 2), "today's two entries accumulate");
+    }
+
+    /// The bug this whole table exists to fix: every range used to return the
+    /// same numbers, because the table being summed was pruned underneath it.
+    #[test]
+    fn ranges_differ_and_survive_history_pruning() {
+        let conn = usage_conn();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(0), 10, 6.0).unwrap();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(3), 20, 12.0).unwrap();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(20), 40, 24.0).unwrap();
+        HistoryManager::record_daily_usage(&conn, ts_days_ago(200), 80, 48.0).unwrap();
+
+        let today = sum_for(&conn, Some(HistoryManager::local_day_offset(0))).0;
+        let week = sum_for(&conn, Some(HistoryManager::local_day_offset(6))).0;
+        let month = sum_for(&conn, Some(HistoryManager::local_day_offset(29))).0;
+        let all = sum_for(&conn, None).0;
+
+        assert_eq!((today, week, month, all), (10, 30, 70, 150));
+        assert!(
+            today < week && week < month && month < all,
+            "each range must be a strict superset of the last"
+        );
+
+        // Pruning the history must not move any of these numbers - that
+        // dependency is exactly what made "all time" a falsehood.
+        conn.execute("DELETE FROM transcription_history", []).unwrap();
+        assert_eq!(sum_for(&conn, None).0, 150);
+    }
+
+    /// Guards the DST trap: 30 calendar days back is not 30 * 86400 seconds.
+    #[test]
+    fn day_offsets_are_calendar_days() {
+        let today = HistoryManager::local_day_offset(0);
+        let month = HistoryManager::local_day_offset(29);
+        assert!(month < today);
+
+        let expected = (Local::now().date_naive() - chrono::Duration::days(29))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert_eq!(month, expected);
     }
 
     fn insert_entry(conn: &Connection, timestamp: i64, text: &str, post_processed: Option<&str>) {

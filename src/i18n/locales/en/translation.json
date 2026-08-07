@@ -481,6 +481,7 @@
       "averageWpm": "Average WPM",
       "totalRecordings": "Recordings",
       "range": {
+        "today": "Today",
         "week": "This Week",
         "month": "This Month",
         "allTime": "All Time"

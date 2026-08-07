@@ -1252,7 +1252,7 @@ uncovered_bindings: string[];
 recorder_blocked: boolean }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
-export type StatsRange = "week" | "month" | "all_time"
+export type StatsRange = "today" | "week" | "month" | "all_time"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
