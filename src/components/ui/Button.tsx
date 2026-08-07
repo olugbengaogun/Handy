@@ -19,8 +19,14 @@ export const Button: React.FC<ButtonProps> = ({
   size = "md",
   ...props
 }) => {
+  // `focus:outline-none` on its own used to remove the browser's focus ring and
+  // put nothing back, so a keyboard user tabbing through settings could not see
+  // where they were. `focus-visible` restores a ring for keyboard focus only,
+  // which is why the outline could be dropped in the first place — a mouse
+  // click still shows nothing. The offset keeps the ring off the button's own
+  // border so it reads on both the light and dark surface.
   const baseClasses =
-    "font-medium rounded-lg border focus:outline-none transition-colors ease-apple disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
+    "font-medium rounded-lg border outline-none transition-colors ease-apple focus-visible:ring-2 focus-visible:ring-logo-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer";
 
   const variantClasses = {
     primary:

@@ -25,6 +25,19 @@ import Badge from "../../ui/Badge";
  * can see, in one screen, everything it has concluded.
  */
 
+/**
+ * Mirrors `DEFAULT_PROMOTION_THRESHOLD` in `managers::learning`: a correction
+ * must be made twice before it is offered as a rule. One occurrence would
+ * promote typos and changes of mind, which is the one failure a system that
+ * learns from you must never have.
+ *
+ * The gate is right; its *invisibility* was the bug. Fixing a transcript and
+ * then finding "Nothing yet" on this screen reads as the app having ignored
+ * you, so everything below the threshold is now shown as being learned rather
+ * than hidden until it qualifies.
+ */
+const PROMOTION_THRESHOLD = 2;
+
 /** A single `before → after` pair, rendered the same way in both lists. */
 const CorrectionRow: React.FC<{
   suggestion: LearningSuggestion;
@@ -66,8 +79,11 @@ export const VocabularySettings: React.FC = () => {
       // promotion moves a row from suggestions to rules, and accepting a mined
       // term removes it from the candidate list. Showing one of those updated
       // and not the others would be worse than a slightly slower load.
+      // Asks for everything from one occurrence up, not just what already
+      // qualifies, so the screen can show corrections it is still learning
+      // instead of silently withholding them until they hit the threshold.
       const [pending, mined] = await Promise.all([
-        commands.getLearningSuggestions(null),
+        commands.getLearningSuggestions(1),
         commands.getDictionaryCandidates(),
       ]);
 
@@ -146,6 +162,13 @@ export const VocabularySettings: React.FC = () => {
     [load, refreshSettings],
   );
 
+  // Split rather than filtered: both halves are real state the user should be
+  // able to see. Ready ones can be accepted; the rest are on their way there.
+  const ready = suggestions.filter((s) => s.occurrences >= PROMOTION_THRESHOLD);
+  const learning = suggestions.filter(
+    (s) => s.occurrences < PROMOTION_THRESHOLD,
+  );
+
   if (loading) {
     return (
       <div className="max-w-3xl w-full mx-auto">
@@ -164,7 +187,7 @@ export const VocabularySettings: React.FC = () => {
         title={t("settings.vocabulary.suggestions.title")}
         description={t("settings.vocabulary.suggestions.description")}
       >
-        {suggestions.length === 0 ? (
+        {ready.length === 0 ? (
           // The empty state explains the mechanism rather than just reporting
           // emptiness — for most users this screen is empty the first time they
           // open it, and that is the moment to say how it fills up.
@@ -175,7 +198,7 @@ export const VocabularySettings: React.FC = () => {
             </p>
           </div>
         ) : (
-          suggestions.map((suggestion) => (
+          ready.map((suggestion) => (
             <CorrectionRow
               key={suggestion.id}
               suggestion={suggestion}
@@ -218,6 +241,42 @@ export const VocabularySettings: React.FC = () => {
           ))
         )}
       </SettingsGroup>
+
+      {/* Corrections seen once. Not offered for promotion — that is the whole
+          point of the gate — but shown, because a fix that vanishes without a
+          trace is indistinguishable from one that was never recorded. This is
+          the screen that made "I split Grandmaster and it didn't take" look
+          true when the correction had in fact been captured. */}
+      {learning.length > 0 && (
+        <SettingsGroup
+          title={t("settings.vocabulary.learning.title")}
+          description={t("settings.vocabulary.learning.description")}
+        >
+          {learning.map((suggestion) => (
+            <CorrectionRow
+              key={suggestion.id}
+              suggestion={suggestion}
+              countLabel={t("settings.vocabulary.learning.seenOnce")}
+            >
+              {/* Dismiss only. Accepting here would bypass the gate and let a
+                  one-off typo become a permanent rule. */}
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busyId === suggestion.id}
+                onClick={() => void act(suggestion.id, "dismiss")}
+                aria-label={t("settings.vocabulary.suggestions.dismissLabel", {
+                  before: suggestion.before,
+                  after: suggestion.after,
+                })}
+              >
+                <X size={14} />
+                {t("settings.vocabulary.suggestions.dismiss")}
+              </Button>
+            </CorrectionRow>
+          ))}
+        </SettingsGroup>
+      )}
 
       {/* The manual half of the same concept. Previously these lived under
           Advanced → Transcription, which split one idea — "what Handy Plus

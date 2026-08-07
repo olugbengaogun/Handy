@@ -689,6 +689,11 @@
         "acceptLabel": "Always correct {{before}} to {{after}}",
         "dismissLabel": "Never suggest correcting {{before}} to {{after}}"
       },
+      "learning": {
+        "title": "Still learning",
+        "description": "Fixes seen once. Make the same one again and it moves up to be accepted — waiting for a second sighting is what stops a typo becoming a permanent rule.",
+        "seenOnce": "seen once"
+      },
       "candidates": {
         "title": "Words you use often",
         "description": "Names and terms found in your past transcripts. Adding one tells the model to listen for it.",
