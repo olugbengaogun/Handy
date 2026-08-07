@@ -926,6 +926,14 @@ async getUsageStats(range: StatsRange) : Promise<Result<UsageStats, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async getUsageDaily(days: number) : Promise<Result<DailyUsage[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_usage_daily", { days }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Corrections the user has made often enough to be worth offering as rules.
  */
@@ -1296,6 +1304,15 @@ export type TermSuggestion = { term: string; occurrences: number }
 export type Theme = "system" | "light" | "dark"
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * One local day's dictation totals. Days with no dictation are present with
+ * zeroes rather than absent.
+ */
+export type DailyUsage = {
+/**
+ * Local calendar day, `YYYY-MM-DD`.
+ */
+day: string; words: number; entries: number; duration_secs: number }
 export type UsageStats = { total_words: number; total_entries: number; total_duration_secs: number; average_wpm: number }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 

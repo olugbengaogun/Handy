@@ -1,6 +1,6 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
-    history::{HistoryManager, PaginatedHistory, StatsRange, UsageStats},
+    history::{DailyUsage, HistoryManager, PaginatedHistory, StatsRange, UsageStats},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
@@ -190,6 +190,20 @@ pub async fn get_usage_stats(
 ) -> Result<UsageStats, String> {
     history_manager
         .get_usage_stats(range)
+        .map_err(|e| e.to_string())
+}
+
+/// Per-day dictation totals for the trend chart and streak calendar, oldest
+/// first, with empty days included as zeroes.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_usage_daily(
+    _app: AppHandle,
+    history_manager: State<'_, Arc<HistoryManager>>,
+    days: i64,
+) -> Result<Vec<DailyUsage>, String> {
+    history_manager
+        .get_usage_daily(days)
         .map_err(|e| e.to_string())
 }
 

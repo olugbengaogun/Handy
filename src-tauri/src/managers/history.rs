@@ -130,6 +130,17 @@ pub struct PaginatedHistory {
     pub has_more: bool,
 }
 
+/// One local day's dictation totals. Days with no dictation are present with
+/// zeroes rather than absent — see [`HistoryManager::get_usage_daily`].
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct DailyUsage {
+    /// Local calendar day, `YYYY-MM-DD`.
+    pub day: String,
+    pub words: i64,
+    pub entries: i64,
+    pub duration_secs: f64,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum StatsRange {
@@ -833,6 +844,58 @@ impl HistoryManager {
             params![day, word_count, duration_secs],
         )?;
         Ok(())
+    }
+
+    /// Per-day totals for the last `days` local days, oldest first, with days
+    /// the user did not dictate returned as explicit zeroes.
+    ///
+    /// The gaps matter: a bar chart and a streak calendar are both *about* the
+    /// empty days, and a caller left to infer them from missing keys will get
+    /// the arithmetic wrong at a month boundary. Filling them here means one
+    /// implementation of "what is a day" instead of one per consumer.
+    pub fn get_usage_daily(&self, days: i64) -> Result<Vec<DailyUsage>> {
+        let days = days.clamp(1, 366);
+        let conn = self.get_connection()?;
+        let start = Self::local_day_offset(days - 1);
+
+        let mut stmt = conn.prepare(
+            "SELECT day, words, entries, duration_secs
+             FROM usage_daily WHERE day >= ?1",
+        )?;
+        let rows = stmt.query_map(params![start], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+            ))
+        })?;
+
+        let mut found = std::collections::HashMap::new();
+        for row in rows {
+            let (day, words, entries, duration_secs) = row?;
+            found.insert(day, (words, entries, duration_secs));
+        }
+
+        let today = Local::now().date_naive();
+        let series = (0..days)
+            .rev()
+            .map(|back| {
+                let day = (today - chrono::Duration::days(back))
+                    .format("%Y-%m-%d")
+                    .to_string();
+                let (words, entries, duration_secs) =
+                    found.get(&day).copied().unwrap_or((0, 0, 0.0));
+                DailyUsage {
+                    day,
+                    words,
+                    entries,
+                    duration_secs,
+                }
+            })
+            .collect();
+
+        Ok(series)
     }
 
     /// The local date `days_ago` days before today, as the `YYYY-MM-DD` string
