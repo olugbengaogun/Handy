@@ -1,7 +1,11 @@
 {
   "name": "handy-app",
   "private": true,
+<<<<<<< HEAD
   "version": "1.2.0",
+=======
+  "version": "0.9.5",
+>>>>>>> upstream/main
   "type": "module",
   "scripts": {
     "dev": "vite",
