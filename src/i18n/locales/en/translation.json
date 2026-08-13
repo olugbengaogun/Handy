@@ -395,6 +395,10 @@
       "audioNormalization": {
         "label": "Normalize quiet audio",
         "description": "Lifts quiet recordings toward a usable level before transcription. Only boosts — audio that is already loud enough is left untouched."
+      },
+      "discourseFillers": {
+        "label": "Remove \"you know\" and \"I mean\"",
+        "description": "Drops these two phrases when you used them as filler — that is, when a pause follows them. \"Do you know the answer\" and \"I mean it\" are left alone. English only."
       }
     },
     "postProcessing": {
@@ -453,6 +457,39 @@
     },
     "history": {
       "title": "History",
+      "select": "Select",
+      "cancelSelect": "Cancel",
+      "selectAllVisible": "Select all shown",
+      "clearSelection": "Clear",
+      "selectedCount": "{{n}} selected",
+      "exportButton": "Export…",
+      "export": {
+        "title": "Export transcripts",
+        "format": "Format",
+        "formats": {
+          "markdown": "Markdown — grouped by day, for reading",
+          "csv": "CSV — one row per transcript, for spreadsheets",
+          "plain_text": "Plain text — transcripts only",
+          "training_jsonl": "Training JSONL — correction pairs"
+        },
+        "range": "Date range",
+        "ranges": {
+          "last7": "Last 7 days",
+          "last30": "Last 30 days",
+          "last90": "Last 90 days",
+          "all": "Everything"
+        },
+        "selectionOnly": "Only the {{n}} I ticked",
+        "verifiedOnly": "Only transcripts I corrected by hand",
+        "prunedByCount": "Handy Plus is keeping only your {{n}} most recent transcripts — older ones have already been deleted and cannot be exported. Star transcripts to keep them, or raise the limit in History settings.",
+        "prunedByAge": "Handy Plus deletes transcripts older than your retention setting, so anything past it is already gone and cannot be exported.",
+        "trainingNote": "Contains phrase corrections you have made, plus whole-transcript pairs for anything you correct from now on. Transcripts corrected before this feature existed cannot be paired — the original text was not kept.",
+        "confirm": "Choose file and export",
+        "working": "Exporting…",
+        "cancel": "Cancel",
+        "close": "Close",
+        "done": "Exported {{transcripts}} transcripts ({{pairs}} training pairs, {{corrections}} phrase corrections)."
+      },
       "openFolder": "Open Recordings Folder",
       "loading": "Loading history...",
       "empty": "No transcriptions yet. Start recording to build your history!",

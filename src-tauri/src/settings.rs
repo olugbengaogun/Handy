@@ -471,6 +471,12 @@ pub struct AppSettings {
     pub external_script_path: Option<String>,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
+    /// Drop spoken discourse markers ("you know", "I mean") when punctuation
+    /// shows they were parenthetical. Separate from `custom_filler_words`
+    /// because that list is single-word and clause-blind — see
+    /// `audio_toolkit::discourse`. English only.
+    #[serde(default = "default_remove_discourse_fillers")]
+    pub remove_discourse_fillers: bool,
     /// Lift quiet recordings toward a usable level before transcription.
     /// Boost-only and gain-capped, so healthy audio is passed through
     /// untouched — see `audio_toolkit::audio::normalize`.
@@ -628,6 +634,14 @@ fn default_theme() -> Theme {
 
 fn default_post_process_enabled() -> bool {
     false
+}
+
+/// On by default: the markers it removes carry no truth-conditional meaning,
+/// and the trailing-comma requirement means a literal "do you know the answer"
+/// is never touched. Existing settings files gain it through serde's default,
+/// so no migration and no schema bump.
+fn default_remove_discourse_fillers() -> bool {
+    true
 }
 
 fn default_app_language() -> String {
@@ -943,6 +957,7 @@ pub fn get_default_settings() -> AppSettings {
         typing_tool: default_typing_tool(),
         external_script_path: None,
         custom_filler_words: None,
+        remove_discourse_fillers: default_remove_discourse_fillers(),
         audio_normalization: default_audio_normalization(),
         double_metaphone_matching: false,
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
@@ -1340,6 +1355,11 @@ mod tests {
         assert_eq!(settings.bindings["transcribe"].current_binding, "f13");
         assert_eq!(settings.log_level, LogLevel::Debug);
         assert_eq!(settings.sound_theme, SoundTheme::Pop);
+
+        // A store written before the field existed must adopt its default
+        // rather than failing to parse — the whole point of adding it
+        // additively instead of bumping the schema version.
+        assert!(settings.remove_discourse_fillers);
 
         // A current-format store must not be rewritten on every read.
         assert!(!apply_settings_migrations(&mut settings, &stored));

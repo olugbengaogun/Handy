@@ -1,10 +1,94 @@
 use crate::actions::process_transcription_output;
 use crate::managers::{
+    export::{self, ExportFormat},
     history::{HistoryManager, PaginatedHistory, UsageRange},
     transcription::TranscriptionManager,
 };
 use std::sync::Arc;
 use tauri::{AppHandle, State};
+
+/// What an export actually wrote, so the UI can confirm rather than assume.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+pub struct ExportSummary {
+    /// Transcripts included.
+    pub transcripts: u32,
+    /// Phrase corrections included — only ever non-zero for training exports.
+    pub corrections: u32,
+    /// Transcripts that yielded a messy/clean training pair. Lower than
+    /// `transcripts` whenever rows predate `original_text` or were never edited,
+    /// which is worth surfacing: a training export can legitimately be empty.
+    pub training_pairs: u32,
+    pub path: String,
+    pub bytes: u64,
+}
+
+/// Write selected transcripts to a file the user picked.
+///
+/// Read-only against the database; the one side effect is the destination file.
+/// No audio and no network — this is the whole feature's blast radius.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_history(
+    history_manager: State<'_, Arc<HistoryManager>>,
+    format: ExportFormat,
+    from: Option<i64>,
+    to: Option<i64>,
+    ids: Option<Vec<i64>>,
+    verified_only: bool,
+    destination: String,
+) -> Result<ExportSummary, String> {
+    let rows = history_manager
+        .collect_export_rows(from, to, ids.as_deref(), verified_only)
+        .map_err(|e| format!("Could not read transcripts: {e}"))?;
+
+    // Only the training format consults corrections, so the query is skipped
+    // entirely for the readable ones.
+    let corrections = if format == ExportFormat::TrainingJsonl {
+        history_manager
+            .collect_corrections(from, to)
+            .map_err(|e| format!("Could not read corrections: {e}"))?
+    } else {
+        Vec::new()
+    };
+
+    let contents = export::render(format, &rows, &corrections);
+
+    // Count pairs the same way the renderer does, so the summary cannot claim
+    // something the file does not contain.
+    let training_pairs = rows
+        .iter()
+        .filter(|row| {
+            row.original
+                .as_deref()
+                .is_some_and(|original| original.trim() != row.text.trim())
+        })
+        .count() as u32;
+
+    let mut path = std::path::PathBuf::from(&destination);
+    // A save dialog does not reliably append its filter's extension when the
+    // user types a bare name, and a `.jsonl` export saved as `notes` opens as
+    // nothing in particular. Only filled in when absent, so a deliberate
+    // extension is always respected.
+    if path.extension().is_none() {
+        path.set_extension(format.extension());
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
+    }
+    std::fs::write(&path, contents.as_bytes())
+        .map_err(|e| format!("Could not write {}: {e}", path.display()))?;
+
+    Ok(ExportSummary {
+        transcripts: rows.len() as u32,
+        corrections: corrections.len() as u32,
+        training_pairs,
+        // The path actually written, which may differ from what was requested.
+        path: path.to_string_lossy().into_owned(),
+        bytes: contents.len() as u64,
+    })
+}
 
 #[tauri::command]
 #[specta::specta]

@@ -926,6 +926,14 @@ async getUsageRange(start: string | null, end: string | null) : Promise<Result<U
     else return { status: "error", error: e  as any };
 }
 },
+async exportHistory(format: ExportFormat, from: number | null, to: number | null, ids: number[] | null, verifiedOnly: boolean, destination: string) : Promise<Result<ExportSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("export_history", { format, from, to, ids, verifiedOnly, destination }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Corrections the user has made often enough to be worth offering as rules.
  */
@@ -1097,7 +1105,7 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; 
+reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; custom_filler_words?: string[] | null; remove_discourse_fillers?: boolean;
 /**
  * Lift quiet recordings toward a usable level before transcription.
  * Boost-only and gain-capped, so healthy audio is passed through
@@ -1307,6 +1315,11 @@ day: string; words: number; entries: number; duration_secs: number }
 /**
  * A window of daily usage plus the extremes of the whole record.
  */
+export type ExportFormat = "markdown" | "csv" | "plain_text" | "training_jsonl"
+/**
+ * What an export actually wrote, so the UI can confirm rather than assume.
+ */
+export type ExportSummary = { transcripts: number; corrections: number; training_pairs: number; path: string; bytes: number }
 export type UsageRange = { days: DailyUsage[]; 
 /**
  * Earliest local day with any recorded dictation, if there is any.

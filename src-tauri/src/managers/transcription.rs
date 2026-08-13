@@ -1,7 +1,7 @@
 use crate::audio_toolkit::{
     apply_correction_pairs_tracked, apply_custom_words_with, apply_outside_protected,
     build_whisper_initial_prompt, filter_transcription_output, normalize_for_transcription,
-    WhisperPrompt,
+    remove_discourse_fillers, WhisperPrompt,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1718,11 +1718,21 @@ fn post_process_transcription_text(
             pairs.text
         };
 
-        filter_transcription_output(
+        let filtered = filter_transcription_output(
             &corrected,
             &settings.app_language,
             &settings.custom_filler_words,
-        )
+        );
+
+        // Phrase-level discourse markers ("you know", "I mean") cannot go in the
+        // filler list above: its patterns are `\b{word}\b[,.]?` with no clause
+        // awareness, so `\byou know\b` would fire inside "do you know the
+        // answer". This pass keys off the trailing comma instead.
+        if settings.remove_discourse_fillers {
+            remove_discourse_fillers(&filtered, &settings.app_language)
+        } else {
+            filtered
+        }
     })
 }
 

@@ -1,3 +1,4 @@
+use crate::managers::export::{CorrectionRow, ExportRow};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, Utc};
 use log::{debug, error, info};
@@ -126,6 +127,20 @@ static MIGRATIONS: &[M] = &[
             WHERE trim(transcription_text) != ''
             GROUP BY 1;",
     ),
+    // The model's own first output, frozen. `update_transcription` overwrites
+    // `transcription_text` in place, so once a transcript is hand-corrected the
+    // messy version it replaced is gone — which means the database records the
+    // answer to every correction but never the question. Training a cleanup
+    // model, or measuring how much cleanup is even needed, both want the pair.
+    //
+    // Written once at insert and never touched again, by any caller. Retry
+    // deliberately does not refresh it: a retry replaces the transcript with
+    // *different model output*, and pairing a later run's text against an
+    // earlier run's would fabricate a correction no human ever made.
+    //
+    // NULL for every row that predates this column. Those pairs are not
+    // recoverable, and a NULL says so honestly rather than guessing.
+    M::up("ALTER TABLE transcription_history ADD COLUMN original_text TEXT;"),
 ];
 
 /// Shared connection setup for every handle onto `history.db`.
@@ -359,6 +374,132 @@ impl HistoryManager {
         &self.recordings_dir
     }
 
+    /// Rows for an export, oldest first so a written file reads chronologically.
+    ///
+    /// The filters compose: an explicit `ids` selection is intersected with the
+    /// date range rather than overriding it, so a user who ticks entries and
+    /// also sets a range gets what both say — never a silent superset of what
+    /// they asked for.
+    ///
+    /// `from`/`to` are unix seconds; `to` is inclusive of its whole second.
+    pub fn collect_export_rows(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+        ids: Option<&[i64]>,
+        verified_only: bool,
+    ) -> Result<Vec<ExportRow>> {
+        let conn = self.get_connection()?;
+
+        let mut sql = String::from(
+            "SELECT id, timestamp, title, transcription_text, original_text,
+                    verified_at, model_id, language, word_count, duration_secs
+             FROM transcription_history
+             WHERE trim(transcription_text) != ''",
+        );
+        // `Value` rather than boxed `dyn ToSql`: every bind here is an integer,
+        // and `Value`/`&Value` implement `ToSql` outright, so `params_from_iter`
+        // needs no trait-object indirection.
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+
+        if let Some(from) = from {
+            args.push(rusqlite::types::Value::Integer(from));
+            sql.push_str(&format!(" AND timestamp >= ?{}", args.len()));
+        }
+        if let Some(to) = to {
+            args.push(rusqlite::types::Value::Integer(to));
+            sql.push_str(&format!(" AND timestamp <= ?{}", args.len()));
+        }
+        if verified_only {
+            sql.push_str(" AND verified_at IS NOT NULL");
+        }
+        if let Some(ids) = ids {
+            // An empty selection means "nothing", not "everything" — returning
+            // the whole history because a checkbox list happened to be empty is
+            // the kind of surprise that ends up in someone's exported file.
+            if ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders: Vec<String> = ids
+                .iter()
+                .map(|id| {
+                    args.push(rusqlite::types::Value::Integer(*id));
+                    format!("?{}", args.len())
+                })
+                .collect();
+            sql.push_str(&format!(" AND id IN ({})", placeholders.join(", ")));
+        }
+        sql.push_str(" ORDER BY timestamp ASC, id ASC");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                let verified_at: Option<i64> = row.get("verified_at")?;
+                Ok(ExportRow {
+                    id: row.get("id")?,
+                    timestamp: row.get("timestamp")?,
+                    title: row.get("title")?,
+                    text: row.get("transcription_text")?,
+                    original: row.get("original_text")?,
+                    verified: verified_at.is_some(),
+                    model_id: row.get("model_id")?,
+                    language: row.get("language")?,
+                    word_count: row.get("word_count")?,
+                    duration_secs: row.get("duration_secs")?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(rows)
+    }
+
+    /// Learned phrase corrections, most frequent first.
+    ///
+    /// Independent of the transcript filters: a correction is deduplicated
+    /// across every transcript it ever appeared in, so it has no single parent
+    /// row to filter by. `from`/`to` are matched against when the correction was
+    /// last seen, which is the only date it can honestly be placed at.
+    pub fn collect_corrections(
+        &self,
+        from: Option<i64>,
+        to: Option<i64>,
+    ) -> Result<Vec<CorrectionRow>> {
+        let conn = self.get_connection()?;
+
+        let mut sql = String::from(
+            "SELECT before_text, after_text, edit_kind, occurrences, model_id, language
+             FROM learning_events
+             WHERE 1 = 1",
+        );
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+
+        if let Some(from) = from {
+            args.push(rusqlite::types::Value::Integer(from));
+            sql.push_str(&format!(" AND last_seen >= ?{}", args.len()));
+        }
+        if let Some(to) = to {
+            args.push(rusqlite::types::Value::Integer(to));
+            sql.push_str(&format!(" AND last_seen <= ?{}", args.len()));
+        }
+        sql.push_str(" ORDER BY occurrences DESC, last_seen DESC");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(args.iter()), |row| {
+                Ok(CorrectionRow {
+                    before: row.get("before_text")?,
+                    after: row.get("after_text")?,
+                    kind: row.get("edit_kind")?,
+                    occurrences: row.get("occurrences")?,
+                    model_id: row.get("model_id")?,
+                    language: row.get("language")?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        Ok(rows)
+    }
+
     /// Save a new history entry to the database.
     /// The WAV file should already have been written to the recordings directory
     /// (unless `has_audio` is false, meaning the caller intentionally isn't
@@ -391,8 +532,9 @@ impl HistoryManager {
                 post_process_requested,
                 has_audio,
                 word_count,
-                duration_secs
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                duration_secs,
+                original_text
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 &file_name,
                 timestamp,
@@ -405,6 +547,11 @@ impl HistoryManager {
                 has_audio,
                 word_count,
                 duration_secs,
+                // Frozen here and never updated again — see the migration note.
+                // Identical to `transcription_text` until a human edits the row,
+                // at which point it becomes the only surviving record of what
+                // the model actually produced.
+                &transcription_text,
             ],
         )?;
 

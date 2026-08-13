@@ -13,6 +13,7 @@ import { AutoSubmit } from "../AutoSubmit";
 import { PostProcessingToggle } from "../PostProcessingToggle";
 import { AppendTrailingSpace } from "../AppendTrailingSpace";
 import { AudioNormalization } from "../AudioNormalization";
+import { DiscourseFillers } from "../DiscourseFillers";
 import { HistoryLimit } from "../HistoryLimit";
 import { RecordingRetentionPeriodSelector } from "../RecordingRetentionPeriod";
 import { KeepAudioRecordings } from "../KeepAudioRecordings";
@@ -50,6 +51,7 @@ export const AdvancedSettings: React.FC = () => {
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
         <AudioNormalization descriptionMode="tooltip" grouped={true} />
+        <DiscourseFillers descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.history")}>

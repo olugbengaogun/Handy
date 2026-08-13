@@ -2,6 +2,7 @@ pub mod audio;
 pub mod constants;
 pub mod corrections;
 pub mod diff;
+pub mod discourse;
 pub mod invariants;
 pub mod phonetic;
 pub mod prompt;
@@ -20,6 +21,7 @@ pub use diff::{
     diff_transcripts, is_plausible_cleanup, tally_promotable, Edit, EditKind,
     DEFAULT_MAX_DIVERGENCE,
 };
+pub use discourse::remove_discourse_fillers;
 pub use invariants::preserves_protected_values;
 pub use phonetic::{
     agreement as phonetic_agreement, score_multiplier as phonetic_score_multiplier,

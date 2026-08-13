@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
+import { ExportDialog } from "./ExportDialog";
 import {
   Check,
   Copy,
@@ -118,6 +119,11 @@ export const HistorySettings: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const [searchInput, setSearchInput] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
+  // Selection is opt-in: the row checkboxes only appear once the user asks for
+  // them, so ordinary browsing keeps the layout it has always had.
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [showExport, setShowExport] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef<HistoryEntry[]>([]);
   const loadingRef = useRef(false);
@@ -334,16 +340,34 @@ export const HistorySettings: React.FC = () => {
         <AudioPlayerGroup>
           <div className="divide-y divide-mid-gray/20">
             {entries.map((entry) => (
-              <HistoryEntryComponent
-                key={entry.id}
-                entry={entry}
-                onToggleSaved={() => toggleSaved(entry.id)}
-                onCopyText={() => copyToClipboard(entry.transcription_text)}
-                getAudioUrl={getAudioUrl}
-                deleteAudio={deleteAudioEntry}
-                retryTranscription={retryHistoryEntry}
-                updateTranscription={updateHistoryEntryText}
-              />
+              <div key={entry.id} className="flex items-start gap-2">
+                {selecting && (
+                  <input
+                    type="checkbox"
+                    className="mt-4 ml-4 shrink-0"
+                    checked={selectedIds.includes(entry.id)}
+                    onChange={(e) =>
+                      setSelectedIds((previous) =>
+                        e.target.checked
+                          ? [...previous, entry.id]
+                          : previous.filter((id) => id !== entry.id),
+                      )
+                    }
+                    aria-label={entry.title}
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <HistoryEntryComponent
+                    entry={entry}
+                    onToggleSaved={() => toggleSaved(entry.id)}
+                    onCopyText={() => copyToClipboard(entry.transcription_text)}
+                    getAudioUrl={getAudioUrl}
+                    deleteAudio={deleteAudioEntry}
+                    retryTranscription={retryHistoryEntry}
+                    updateTranscription={updateHistoryEntryText}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         </AudioPlayerGroup>
@@ -362,11 +386,53 @@ export const HistorySettings: React.FC = () => {
               {t("settings.history.title")}
             </h2>
           </div>
-          <OpenRecordingsButton
-            onClick={openRecordingsFolder}
-            label={t("settings.history.openFolder")}
-          />
+          <div className="flex items-center gap-2">
+            <button
+              className="text-xs text-text/70 hover:text-text cursor-pointer"
+              onClick={() => {
+                // Leaving selection mode drops the ticks, so a stale selection
+                // can never be exported after the list has been re-filtered.
+                setSelecting((on) => !on);
+                setSelectedIds([]);
+              }}
+            >
+              {selecting
+                ? t("settings.history.cancelSelect")
+                : t("settings.history.select")}
+            </button>
+            <button
+              className="text-xs text-text/70 hover:text-text cursor-pointer"
+              onClick={() => setShowExport(true)}
+            >
+              {t("settings.history.exportButton")}
+            </button>
+            <OpenRecordingsButton
+              onClick={openRecordingsFolder}
+              label={t("settings.history.openFolder")}
+            />
+          </div>
         </div>
+        {selecting && (
+          <div className="px-4 flex items-center gap-3 text-xs text-text/70">
+            <span>
+              {t("settings.history.selectedCount", {
+                n: selectedIds.length,
+              })}
+            </span>
+            <button
+              className="hover:text-text cursor-pointer"
+              onClick={() => setSelectedIds(entries.map((entry) => entry.id))}
+            >
+              {t("settings.history.selectAllVisible")}
+            </button>
+            <button
+              className="hover:text-text cursor-pointer"
+              onClick={() => setSelectedIds([])}
+            >
+              {t("settings.history.clearSelection")}
+            </button>
+          </div>
+        )}
         <div className="px-4 relative">
           <Search
             className="absolute left-7 top-1/2 -translate-y-1/2 text-text/40 pointer-events-none"
@@ -394,6 +460,12 @@ export const HistorySettings: React.FC = () => {
           {content}
         </div>
       </div>
+      {showExport && (
+        <ExportDialog
+          selectedIds={selectedIds}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </div>
   );
 };
