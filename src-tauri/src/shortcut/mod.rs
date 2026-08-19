@@ -584,16 +584,24 @@ pub fn change_theme_setting(app: AppHandle, theme: String) -> Result<(), String>
     };
     settings.theme = parsed;
     settings::write_settings(&app, settings);
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     apply_window_theme(&app, parsed);
+    // Notify other webviews (the recording overlay) so they re-apply the palette
+    // live — they set `data-theme` on their own document and can't see this one.
+    let _ = app.emit("theme-changed", parsed);
     Ok(())
 }
 
-/// Applies the appearance setting to the Windows title bar, which CSS
-/// `data-theme` cannot reach. `System` clears the override so the window follows
-/// Windows. Call this on startup and whenever the setting changes to keep the
-/// title bar in sync with the in-app palette.
-#[cfg(target_os = "windows")]
+/// Applies the appearance setting to the native window chrome (title bar), which
+/// CSS `data-theme` cannot reach. `System` clears the override so the window
+/// follows the OS. Call this on startup and whenever the setting changes to keep
+/// the title bar in sync with the in-app palette.
+///
+/// On Windows this themes the title bar only. On macOS `set_theme` sets
+/// `NSApp.appearance` app-wide, which is what we want here: it darkens the title
+/// bar and keeps the overlay in step. Linux is left to `data-theme` alone, since
+/// its window theming is backend-dependent and unreliable.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn apply_window_theme(app: &AppHandle, theme: Theme) {
     let window_theme = match theme {
         Theme::System => None,
@@ -1273,6 +1281,18 @@ pub fn change_vad_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), S
 
 #[tauri::command]
 #[specta::specta]
+pub fn change_filler_word_removal_enabled_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.filler_word_removal_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.app_language = language.clone();
@@ -1332,7 +1352,7 @@ pub fn change_ort_accelerator_setting(
 
 #[tauri::command]
 #[specta::specta]
-pub fn change_transcribe_gpu_device(app: AppHandle, device: i32) -> Result<(), String> {
+pub fn change_transcribe_gpu_device(app: AppHandle, device: Option<String>) -> Result<(), String> {
     let mut s = settings::get_settings(&app);
     s.transcribe_gpu_device = device;
     save_accelerator_and_reload_next_use(&app, s);

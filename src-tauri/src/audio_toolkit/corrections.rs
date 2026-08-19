@@ -814,7 +814,27 @@ mod tests {
     /// follows the test module at file scope (clippy::items_after_test_module).
     mod pipeline_tests {
         use super::*;
-        use crate::audio_toolkit::text::{apply_custom_words, filter_transcription_output};
+        use crate::audio_toolkit::text::{
+            apply_custom_words, normalize_transcription_output, remove_filler_words,
+            OutputLanguageEvidence,
+        };
+
+        /// Upstream split the old `filter_transcription_output` into filler
+        /// removal plus normalization. These tests exist to prove the pipeline
+        /// is byte-identical to its pre-corrections behaviour, so they keep
+        /// exercising the whole sequence under the original name instead of
+        /// being rewritten around the split - rewriting them would quietly
+        /// change what they assert. Mirrors the shim upstream added to
+        /// text.rs's own tests for the same reason.
+        fn filter_transcription_output(
+            text: &str,
+            language: &str,
+            custom_filler_words: &Option<Vec<String>>,
+        ) -> String {
+            let language = OutputLanguageEvidence::UserSelected(language.to_string());
+            let filtered = remove_filler_words(text, &language, custom_filler_words, true);
+            normalize_transcription_output(&filtered)
+        }
 
         /// Mirrors `post_process_transcription_text`.
         fn pipeline(

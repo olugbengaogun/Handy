@@ -4,6 +4,7 @@ pub mod corrections;
 pub mod diff;
 pub mod discourse;
 pub mod invariants;
+pub mod lang_id;
 pub mod phonetic;
 pub mod prompt;
 pub mod terms;
@@ -23,11 +24,16 @@ pub use diff::{
 };
 pub use discourse::remove_discourse_fillers;
 pub use invariants::preserves_protected_values;
+pub use lang_id::detect_output_language;
 pub use phonetic::{
     agreement as phonetic_agreement, score_multiplier as phonetic_score_multiplier,
 };
 pub use prompt::{build_whisper_initial_prompt, WhisperPrompt};
 pub use terms::{mine_candidates, TermCandidate};
-pub use text::{apply_custom_words, apply_custom_words_with, filter_transcription_output};
+// filter_transcription_output was renamed normalize_transcription_output upstream.
+pub use text::{
+    apply_custom_words, apply_custom_words_with, normalize_transcription_output,
+    remove_filler_words, OutputLanguageEvidence,
+};
 pub use utils::get_cpal_host;
 pub use vad::{SileroVad, VoiceActivityDetector};

@@ -23,6 +23,7 @@ import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationS
 import { VoiceActivityDetection } from "../VoiceActivityDetection";
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
+import { FillerWordRemoval } from "../FillerWordRemoval";
 
 export const AdvancedSettings: React.FC = () => {
   const { t } = useTranslation();
@@ -49,6 +50,12 @@ export const AdvancedSettings: React.FC = () => {
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <VoiceActivityDetection descriptionMode="tooltip" grouped={true} />
+        {/* Upstream also adds <CustomWords /> here. This fork deliberately moved
+            that control to the Vocabulary tab, so re-adding it would render the
+            same setting twice. FillerWordRemoval is genuinely new and is adopted:
+            this fork already carried filler_word_removal_enabled with no UI to
+            reach it. */}
+        <FillerWordRemoval descriptionMode="tooltip" grouped={true} />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
         <AudioNormalization descriptionMode="tooltip" grouped={true} />
         <DiscourseFillers descriptionMode="tooltip" grouped={true} />

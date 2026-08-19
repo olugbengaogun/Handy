@@ -628,50 +628,77 @@ impl ShortcutAction for TranscribeAction {
         let skip_start_chime = settings.mute_while_recording;
 
         let mut recording_error: Option<String> = None;
-        if is_always_on {
-            // Always-on mode: mute already applied above; just play the start chime.
-            if skip_start_chime {
-                debug!("Skipping start chime: mute_while_recording muted its output device");
-            } else {
-                debug!("Always-on mode: Playing audio feedback immediately");
+        let recording_start_time = Instant::now();
+        match rm.try_start_recording(&binding_id, vad_policy) {
+            Ok(readiness) => {
+                debug!(
+                    "Recording request accepted in {:?}; waiting for first microphone samples",
+                    recording_start_time.elapsed()
+                );
+                let generation = readiness.generation();
                 let app_clone = app.clone();
-                // The blocking helper exits immediately if audio feedback is disabled.
+                let rm_clone = Arc::clone(&rm);
                 std::thread::spawn(move || {
-                    play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                    if !readiness.wait() {
+                        debug!("Microphone readiness wait ended without receiving samples");
+                        return;
+                    }
+
+                    // Development-only preview hook for evaluating the brief
+                    // arming animation on hardware that normally starts too fast
+                    // to make it visible.
+                    #[cfg(debug_assertions)]
+                    if let Ok(delay_ms) = std::env::var("HANDY_DEBUG_MIC_READY_DELAY_MS")
+                        .unwrap_or_default()
+                        .parse::<u64>()
+                    {
+                        let delay_ms = delay_ms.min(10_000);
+                        if delay_ms > 0 {
+                            debug!("Delaying microphone-ready cue by {delay_ms}ms for UI preview");
+                            std::thread::sleep(Duration::from_millis(delay_ms));
+                        }
+                    }
+
+                    if !rm_clone.is_recording_readiness_current(generation) {
+                        debug!("Microphone became ready for an inactive recording");
+                        return;
+                    }
+
+                    debug!("Microphone is receiving samples; recording is ready");
+                    utils::emit_recording_ready(&app_clone);
+
+                    // The start chime is a readiness cue, so it must follow the
+                    // first real input callback rather than Stream::play() or a
+                    // fixed delay. The helper returns immediately when feedback
+                    // is disabled.
+                    //
+                    // Handy Plus adds the skip_start_chime guard. This fork
+                    // applies the mute on keypress rather than here, so by this
+                    // point the output device is already silenced and the chime
+                    // would be inaudible - and playing it anyway would tempt a
+                    // future unmute-play-remute, which reopens mid-recording the
+                    // exact background-audio-bleed window the early mute exists
+                    // to close. The recording overlay is the start feedback
+                    // instead.
+                    if !skip_start_chime && rm_clone.is_recording_readiness_current(generation) {
+                        play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                    }
+                    // Upstream moved the mute to this readiness point. This fork
+                    // deliberately mutes on keypress instead - waiting until the
+                    // mic delivers samples leaves background audio bleeding in
+                    // for however long the device takes to open - so this call
+                    // is a no-op here: apply_mute returns false while a mute is
+                    // already active. Kept rather than deleted so the line still
+                    // matches upstream and future merges stay quiet, and so a
+                    // mute dropped by a mid-take device restart is re-applied.
+                    if rm_clone.is_recording_readiness_current(generation) {
+                        rm_clone.apply_mute();
+                    }
                 });
             }
-
-            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
-                debug!("Recording failed: {}", e);
+            Err(e) => {
+                debug!("Failed to start recording: {}", e);
                 recording_error = Some(e);
-            }
-        } else {
-            // On-demand mode: mute already applied above; start recording, then
-            // play the start chime after a short delay to let the mic stream settle.
-            debug!("On-demand mode: Starting recording first, then audio feedback");
-            let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id, vad_policy) {
-                Ok(()) => {
-                    debug!("Recording started in {:?}", recording_start_time.elapsed());
-                    if skip_start_chime {
-                        debug!(
-                            "Skipping start chime: mute_while_recording muted its output device"
-                        );
-                    } else {
-                        // Small delay to ensure microphone stream is active
-                        let app_clone = app.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            debug!("Handling delayed audio feedback");
-                            // Helper handles disabled audio feedback by returning early.
-                            play_feedback_sound_blocking(&app_clone, SoundType::Start);
-                        });
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to start recording: {}", e);
-                    recording_error = Some(e);
-                }
             }
         }
 
@@ -728,6 +755,11 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        // Prevent a slow microphone from emitting a ready event or start chime
+        // after the user has already requested stop.
+        app.state::<Arc<AudioRecordingManager>>()
+            .invalidate_recording_readiness();
+
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
 

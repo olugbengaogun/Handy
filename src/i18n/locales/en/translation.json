@@ -387,6 +387,10 @@
         "title": "Voice Activity Detection",
         "description": "Filter silence from recordings. Streaming-capable models use a longer VAD tail; disabling VAD records raw audio."
       },
+      "fillerWordRemoval": {
+        "title": "Remove Filler Words",
+        "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+      },
       "keepAudioRecordings": {
         "label": "Keep Audio Recordings",
         "description": "Save the audio for each dictation alongside its text. Turn off to keep searchable transcript history without storing audio files, saving disk space."
