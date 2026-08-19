@@ -16,12 +16,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use log::{error, info};
+use log::{error, info, warn};
 use objc2::rc::Retained;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use objc2_foundation::{NSArray, NSInteger, NSObject, NSString};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use super::{evaluate, send_chord, TxState, WaitDecision};
@@ -231,9 +231,23 @@ fn spawn_waiter(pending: Arc<Mutex<MacPending>>, app_handle: AppHandle) {
         } else if receipt_seen {
             info!("[reliable-paste] settling: reads went quiet");
         } else if injection_failed {
-            info!("[reliable-paste] settling: chord injection failed, restoring quickly");
+            warn!("[reliable-paste] settling: chord injection failed, restoring quickly");
+            // The chord never reached the system, so nothing was pasted.
+            let _ = app_handle.emit("paste-error", ());
         } else {
-            info!("[reliable-paste] settling: no read within timeout, restoring anyway");
+            // The chord was injected and macOS accepted it, but nothing ever
+            // read the clipboard promise before the timeout - so the target
+            // application silently ignored the paste. This is the failure mode
+            // that used to be invisible: no error is raised anywhere, because
+            // from the OS's point of view the keystroke was delivered fine, and
+            // the user only discovers it by noticing the text never appeared.
+            //
+            // Deliberately not raised for the two branches above this one:
+            // ownership_lost means the user copied something else (their action,
+            // not a failure), and receipt_seen means the paste demonstrably
+            // landed. Only this branch is evidence of a silent drop.
+            warn!("[reliable-paste] settling: no read within timeout - the paste did not land");
+            let _ = app_handle.emit("paste-error", ());
         }
 
         let pending_for_finish = pending.clone();
