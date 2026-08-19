@@ -199,16 +199,18 @@ end timeout
 return "ok"
 "#;
 
-    /// Sends a real Apple Event, which is the point: it makes macOS raise the
-    /// Automation consent prompt while the user is in Settings looking at the
-    /// toggle they just flipped, rather than mid-sentence on their first
-    /// dictation.
+    /// `get player state` rather than anything simpler, and that is the whole
+    /// point. Entering a `tell` block sends nothing; only a command inside it
+    /// does. An earlier version wrapped a bare `return "ok"` in the tell, which
+    /// AppleScript answers itself without ever contacting Spotify - so the probe
+    /// reported success, no consent prompt was raised, and the dialog would have
+    /// ambushed the user mid-sentence on their first dictation, which is exactly
+    /// what this exists to prevent. Reading a property is a real Apple Event.
     const PROBE_SCRIPT: &str = r#"
 with timeout of 2 seconds
 	if application "Spotify" is running then
-		tell application "Spotify"
-			return "ok"
-		end tell
+		tell application "Spotify" to get player state
+		return "ok"
 	end if
 end timeout
 return "not_running"
