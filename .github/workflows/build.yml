@@ -628,10 +628,20 @@ jobs:
           # are already exported to $GITHUB_ENV by the step above, and gating the
           # updater key would ship an unsigned update manifest that this fork's
           # own installed builds then refuse — the auto-updater would silently
-          # stop working. Upstream's LINUXDEPLOY_OUTPUT_VERSION is dropped with
-          # the rest of the AppImage path; this fork publishes macOS only.
+          # stop working.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # These two are upstream's and are kept. A note here used to say the
+          # LINUXDEPLOY_* vars were dropped "with the rest of the AppImage path",
+          # which was true while this fork carried its own manual AppImage
+          # post-processing. Upstream has since replaced that with the linuxdeploy
+          # install step above - which this merge adopts - so dropping the vars
+          # left that step installed *for its exclusion support* with no exclusion
+          # list to read, and nothing doing the library removal the old manual
+          # steps used to do. Both are ubuntu-gated, so they stay inert for the
+          # single macOS target this fork publishes.
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: ${{ contains(inputs.platform, 'ubuntu') && 'libvulkan.so*;libwayland-client.so*' || '' }}
+          LINUXDEPLOY_OUTPUT_VERSION: ${{ contains(inputs.platform, 'ubuntu') && steps.get-version.outputs.version || '' }}
         with:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
