@@ -1,4 +1,11 @@
-import React, { useId, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 /**
  * Chart primitives for the Insights panel.
@@ -238,9 +245,50 @@ export const StreakGrid: React.FC<{
     return out;
   }, [padded]);
 
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [scrolledFromStart, setScrolledFromStart] = useState(false);
+
+  // Open on the newest week, never the oldest. A year is ~52 columns of 14px
+  // against a panel around 640px wide, so this always overflows — and a fresh
+  // scroll container sits at scrollLeft 0, which here is 364 days ago. The
+  // panel therefore opened on a wall of empty squares with today hidden past
+  // the right edge, and the only way to reach your own activity was to scroll
+  // sideways. useLayoutEffect rather than useEffect: this has to land before
+  // paint, or the empty end of the year flashes on every period change.
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth; // over-scroll is clamped to the maximum
+    setScrolledFromStart(el.scrollLeft > 0);
+  }, [data]);
+
+  const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setScrolledFromStart(e.currentTarget.scrollLeft > 0);
+  }, []);
+
   return (
     <div className="relative">
-      <div className="flex gap-[3px] overflow-x-auto pb-1">
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="flex gap-[3px] overflow-x-auto pb-1"
+        // Pinned to today, the history now runs off the *left* edge. A hard
+        // crop there reads as a rendering fault, so the leading column fades
+        // out to say "there is more this way". A mask rather than a gradient
+        // overlay because the panel sits on a translucent surface in two
+        // themes — masking the content needs no colour to match. It is applied
+        // only once actually scrolled, so a short history is never dimmed.
+        style={
+          scrolledFromStart
+            ? {
+                maskImage:
+                  "linear-gradient(to right, transparent 0, #000 28px)",
+                WebkitMaskImage:
+                  "linear-gradient(to right, transparent 0, #000 28px)",
+              }
+            : undefined
+        }
+      >
         {weeks.map((week, wi) => (
           <div key={wi} className="flex flex-col gap-[3px]">
             {Array.from({ length: 7 }).map((_, di) => {

@@ -135,18 +135,28 @@ export const InsightsSettings: React.FC = () => {
     (async () => {
       try {
         // The streak grid always trails the period's end, so navigating back a
-        // year moves the calendar with everything else.
+        // year moves the calendar with everything else — but it must never
+        // trail past today. `bounds.end` is the end of the *period*, which for
+        // the current week, month or year is a date that has not happened yet.
+        // Trailing that padded the grid with days that had not occurred and,
+        // worse, broke the current streak outright: computeStreaks only exempts
+        // the final cell as "today, still in progress", so a series ending next
+        // Saturday hit an empty Friday and reported 0 for someone who had
+        // dictated every day for a month. Clamping here fixes the count and the
+        // calendar at once, and is a no-op for any period that already ended.
+        const today = startOfDay(new Date());
+        const streakEnd = bounds.end > today ? today : bounds.end;
         const streakStart = new Date(
-          bounds.end.getFullYear(),
-          bounds.end.getMonth(),
-          bounds.end.getDate() - (STREAK_DAYS - 1),
+          streakEnd.getFullYear(),
+          streakEnd.getMonth(),
+          streakEnd.getDate() - (STREAK_DAYS - 1),
         );
         const [main, streak] = await Promise.all([
           commands.getUsageRange(
             bounds.start ? toDayKey(bounds.start) : null,
             toDayKey(bounds.end),
           ),
-          commands.getUsageRange(toDayKey(streakStart), toDayKey(bounds.end)),
+          commands.getUsageRange(toDayKey(streakStart), toDayKey(streakEnd)),
         ]);
         if (cancelled) return;
         // A failure must not leave the previous period's figures sitting under
