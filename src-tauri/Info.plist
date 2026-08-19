@@ -4,5 +4,10 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access to transcribe audio locally</string>
+  <!-- Required to pause Spotify while you dictate. Without this key macOS
+       refuses the Apple Event outright, and the feature fails silently: no
+       prompt, no error the user can see, the music simply keeps playing. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Pause your music while you dictate, and resume it afterwards</string>
 </dict>
 </plist>

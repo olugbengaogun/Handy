@@ -248,6 +248,14 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
+      },
+      "pauseMediaWhileRecording": {
+        "label": "Pause Music While Recording",
+        "description": "Pause Spotify when recording starts and resume it from the same spot when you stop",
+        "denied": "Handy Plus is not allowed to control Spotify. Grant it in System Settings > Privacy & Security > Automation.",
+        "notRunning": "Spotify is not running. Start it, then switch this on again to grant permission.",
+        "unsupported": "Pausing music is only available on macOS.",
+        "failed": "Could not reach Spotify. Music will keep playing while you record."
       }
     },
     "advanced": {

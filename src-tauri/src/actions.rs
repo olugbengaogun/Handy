@@ -7,6 +7,7 @@ use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
 use crate::managers::transcription::TranscriptionManager;
+use crate::media_control;
 use crate::settings::{get_settings, AppSettings, OverlayStyle, APPLE_INTELLIGENCE_PROVIDER_ID};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
@@ -546,6 +547,11 @@ impl ShortcutAction for TranscribeAction {
         // still-active recording's mute is in play. It decides whether the
         // failure path below is allowed to unmute.
         let owns_mute = rm.apply_mute();
+        // Pause the music on the same principle as the mute above: first thing,
+        // ahead of model load and device open. Non-blocking - the AppleScript
+        // round trip happens on the media-control worker thread, so it never
+        // delays the take. NO_PAUSE unless the setting is on.
+        let media_token = media_control::pause_for_recording(app);
 
         // Load ASR model and VAD model in parallel
         let kickoff_started = Instant::now();
@@ -688,6 +694,12 @@ impl ShortcutAction for TranscribeAction {
             if owns_mute {
                 rm.remove_mute();
             }
+            // Deliberately outside the owns_mute guard: apply_mute() also
+            // returns false when mute_while_recording is simply switched off,
+            // so gating the music on it would strand Spotify paused for every
+            // user running pause-without-mute. The token carries our own
+            // ownership - it only resumes a pause this call made.
+            media_control::resume_owned(media_token);
             tm.cancel_stream();
             utils::hide_recording_overlay(app);
             change_tray_icon(app, TrayIconState::Idle);
@@ -744,6 +756,9 @@ impl ShortcutAction for TranscribeAction {
 
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
+        // The take is over, so resume regardless of which call paused: this is
+        // a genuine end-of-recording, not a failed start.
+        media_control::resume_any();
 
         // Play audio feedback for recording stop
         play_feedback_sound(app, SoundType::Stop);

@@ -6,5 +6,11 @@
     <true/>
     <key>com.apple.security.device.audio-input</key>
     <true/>
+    <!-- Hardened Runtime is on (tauri.conf.json -> bundle.macOS), and it blocks
+         Apple Events by default. Pairs with NSAppleEventsUsageDescription in
+         Info.plist: the entitlement permits sending them at all, the usage
+         string is what the consent prompt shows. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
   </dict>
 </plist>

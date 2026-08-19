@@ -12,6 +12,7 @@ mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod media_control;
 mod memory;
 mod overlay;
 mod paste_tx;
@@ -658,6 +659,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::suspend_all_bindings,
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
+            media_control::change_pause_media_while_recording_setting,
+            media_control::probe_media_control,
             shortcut::change_append_trailing_space_setting,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_vad_enabled_setting,
@@ -1030,6 +1033,12 @@ pub fn run(cli_args: CliArgs) {
                 if let Some(rm) = app.try_state::<Arc<AudioRecordingManager>>() {
                     rm.remove_mute();
                 }
+                // Same contract for the music: quitting mid-recording must
+                // not leave Spotify paused with the only thing that would
+                // resume it gone. Blocking, because the process is about to
+                // exit — but bounded, so a wedged Spotify cannot hold the app
+                // open. No-ops unless our pause is currently in effect.
+                media_control::resume_blocking();
                 if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
                     let _ = tm.unload_model();
                 }

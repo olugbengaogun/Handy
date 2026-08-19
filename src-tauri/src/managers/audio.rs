@@ -1104,6 +1104,11 @@ impl AudioRecordingManager {
                 // is mid-start (mute applied, state not yet Recording), which that
                 // start path unmutes itself if it fails.
                 self.remove_mute();
+                // Same reasoning, same arm: a cancelled take must give the music
+                // back. Scoped here rather than to cancel_recording as a whole
+                // so a bare `--cancel` with nothing recording cannot resume
+                // music that a mid-start recording just paused.
+                crate::media_control::resume_any();
 
                 if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     let _ = rec.stop(); // Discard the result
