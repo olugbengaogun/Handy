@@ -30,10 +30,9 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  # Dispatching the release workflow, and filing the one issue the circuit
-  # breaker raises when it stops doing so.
+  # Dispatching the release workflow. Issues are disabled on this fork, so
+  # every notification here goes to the run summary and the job status instead.
   actions: write
-  issues: write
 
 jobs:
   sync:
@@ -224,18 +223,27 @@ jobs:
 
           if [ "$SEEN" -ge 2 ] && [ "$BAD" -ge 2 ]; then
             echo "The last two release runs did not succeed - halting before touching main."
-            TITLE="Auto-release halted after repeated failures"
-            EXISTING=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-              --search "\"$TITLE\" in:title" --json number --jq '.[0].number // ""')
-            if [ -z "$EXISTING" ]; then
-              gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body \
-          "The two most recent Release runs did not succeed, so the daily sync has stopped releasing.
-
-          Upstream changes are still being merged and tested - but this run stopped before bumping the version, so no half-finished releases pile up on \`main\` while this is broken.
-
-          To resume: fix whatever broke, run the Release workflow manually once, and close this issue. A single successful run re-arms the automation on its own."
-            fi
-            exit 0
+            # This used to open an issue. Issues are disabled on this fork, so
+            # `gh issue list` failed, and under `set -e` a failing command
+            # substitution in an assignment kills the step - the breaker
+            # reported "Issues has been disabled in this repository" instead of
+            # "auto-release halted", i.e. the diagnostic was about the
+            # messenger. The summary plus a failed job says it without needing
+            # a feature this repo does not have, and failing is the honest
+            # status: the sync deliberately did not do its job this run.
+            {
+              echo "## Auto-release halted after repeated failures"
+              echo
+              echo "The two most recent Release runs did not succeed, so the daily sync has"
+              echo "stopped releasing. Upstream changes are still being merged and tested, but"
+              echo "this run stopped before bumping the version, so no half-finished releases"
+              echo "pile up on \`main\` while this is broken."
+              echo
+              echo "To resume: fix whatever broke and run the Release workflow manually once."
+              echo "A single successful run re-arms the automation on its own."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Auto-release halted: the last two Release runs failed. See the run summary."
+            exit 1
           fi
 
           # Each release needs its own tag, and the tag comes from the version
@@ -448,6 +456,43 @@ jobs:
             git commit -m "chore: upstream sync (has conflicts, needs review)"
           fi
 
+          # A conflict that is already waiting must not be duplicated.
+          #
+          # This matters *because* of the --repo fix above. While `gh pr create`
+          # was silently failing, the daily re-push was invisible - it left one
+          # more orphan branch and nothing else, which is how 13 of them
+          # accumulated unnoticed. Now that PRs genuinely open, the very same
+          # loop would file one PR per day for one unresolved collision.
+          #
+          # Same invariant the stale-conflict-branch job relies on: a
+          # `sync-upstream-*` branch exists only while the collision is
+          # unresolved, because resolving one means merging it and deleting the
+          # branch. So if a branch is already sitting there, this run has
+          # nothing new to say - and re-pushing over it is not an option
+          # either, since a human may be resolving it right now.
+          if ! REMOTE_SYNC_BRANCHES=$(git ls-remote --heads origin "sync-upstream-*"); then
+            echo "::error::Could not list remote branches; refusing to guess whether a conflict is already waiting."
+            exit 1
+          fi
+          EXISTING_BRANCH=$(printf '%s\n' "$REMOTE_SYNC_BRANCHES" \
+            | awk '{ sub("refs/heads/", "", $2); print $2 }' | sort | tail -1)
+
+          if [ -n "$EXISTING_BRANCH" ]; then
+            {
+              echo "### Upstream sync still blocked"
+              echo
+              echo "Reason: **$REASON**"
+              echo
+              echo "\`$EXISTING_BRANCH\` is already waiting to be resolved, so this run did"
+              echo "not open a second branch or a second PR. \`main\` is untouched."
+              echo
+              echo "Resolve that branch, merge it, then delete it - the next sync picks up"
+              echo "everything that has landed upstream since."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Unresolved sync branch $EXISTING_BRANCH already exists; not creating another."
+            exit 0
+          fi
+
           BRANCH="sync-upstream-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git push origin "$BRANCH"
@@ -457,12 +502,13 @@ jobs:
           # never touched. Opening the PR is a *notification*, so it must not be
           # able to fail the job.
           #
-          # On 2026-08-07 it did. SYNC_PAT lacked the Pull requests permission,
-          # `gh pr create` returned "Resource not accessible by personal access
-          # token", and the step exited non-zero - reporting the whole sync as
-          # failed even though it had done its job perfectly. Worse, the failure
-          # arrived as an alarm about the safety net rather than a prompt to
-          # resolve the conflict, which is the opposite of what this is for.
+          # On 2026-08-07 it did. `gh pr create` was targeting the wrong
+          # repository (see --repo below), returned "Resource not accessible by
+          # personal access token", and the step exited non-zero - reporting the
+          # whole sync as failed even though it had done its job perfectly.
+          # Worse, the failure arrived as an alarm about the safety net rather
+          # than a prompt to resolve the conflict, which is the opposite of what
+          # this is for.
           BODY="Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`."
           # printf rather than a multi-line string literal: every line inside a
           # `run: |` block must stay indented past the block's margin, and a
@@ -478,7 +524,22 @@ jobs:
               "$WORKFLOW_CONFLICTS")"
           fi
 
+          # --repo is load-bearing, not decoration. This job adds an `upstream`
+          # remote pointing at cjpais/Handy (see the merge step), and a bare
+          # `gh pr create` resolves its target from the remotes — it picks
+          # `upstream` over `origin`. So for a year this tried to open the PR on
+          # **CJ's repository**, where SYNC_PAT has no access and never should:
+          #
+          #     Resource not accessible by personal access token (createPullRequest)
+          #
+          # which reads exactly like a missing permission and was diagnosed as
+          # one twice. The token had `pull requests: read and write` the whole
+          # time. Every other gh call here already passed --repo; this was the
+          # one that did not. Note the failure was doing us a favour: with
+          # access, this would have published the fork's conflict branch as a
+          # proposed contribution to upstream.
           if ! gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --title "Upstream sync needs a look ($REASON)" \
             --body "$BODY" \
             --base main --head "$BRANCH"; then
@@ -496,3 +557,96 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             echo "::warning::Branch $BRANCH pushed, but the PR could not be opened. See the run summary."
           fi
+
+  # The alarm that was missing. On 2026-08-14 the merge started conflicting, so
+  # every run pushed a `sync-upstream-*` branch and tried to open a PR against
+  # the wrong repo, so `gh pr create` failed — deliberately only
+  # a ::warning:: and a run-summary note, because a failed *notification* must
+  # not report the sync itself as broken (see the comment on that step). The
+  # result was thirteen consecutive green runs while main sat 30 commits behind
+  # upstream and the model catalog quietly went stale. Nobody was told, because
+  # nothing had "failed".
+  #
+  # This job watches the condition itself rather than any one delivery channel:
+  # an unresolved conflict branch that nobody has dealt with. Resolving a sync
+  # means merging it and deleting the branch, so a `sync-upstream-*` branch that
+  # has outlived the grace period IS the unresolved state, whether the PR was
+  # opened, never opened, or opened and ignored. It needs no token and no API —
+  # the timestamp is in the branch name.
+  #
+  # Separate job, not a step: the sync must still run and report its own status
+  # honestly even while an older conflict is outstanding.
+  stale-conflict-branch:
+    runs-on: ubuntu-24.04
+    needs: sync
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fail while an unresolved sync branch is outstanding
+        env:
+          # Two days: long enough that a conflict pushed overnight is not an
+          # alarm before anyone could reasonably have looked at it, short
+          # enough that the backlog never reaches the size this one did.
+          GRACE_HOURS: "48"
+        run: |
+          NOW=$(date -u +%s)
+          STALE=""
+          COUNT=0
+
+          # Fetched up front rather than straight into the loop: a process
+          # substitution that fails leaves the loop reading nothing, and the job
+          # would report "all clear" because the network broke — the exact
+          # false-green this job exists to abolish.
+          if ! BRANCHES=$(git ls-remote --heads origin "sync-upstream-*"); then
+            echo "::error::Could not list remote branches; cannot tell whether a sync is unresolved."
+            exit 1
+          fi
+
+          # Branch names are `sync-upstream-YYYYMMDD-HHMMSS`, always UTC.
+          while read -r _sha ref; do
+            # A here-string over empty output still yields one empty line.
+            # Spelled out as an `if`: under `set -e`, a bare `[ ... ] && cmd`
+            # whose test fails is a statement returning 1, which is exactly the
+            # shape that bites people in CI.
+            if [ -z "$ref" ]; then
+              continue
+            fi
+            BRANCH="${ref#refs/heads/}"
+            COUNT=$((COUNT + 1))
+            STAMP="${BRANCH#sync-upstream-}"
+            # `date -d` needs separators; a malformed name must not be silently
+            # skipped, nor treated as infinitely old without saying so.
+            ISO="${STAMP:0:4}-${STAMP:4:2}-${STAMP:6:2} ${STAMP:9:2}:${STAMP:11:2}:${STAMP:13:2}"
+            if ! WHEN=$(date -u -d "$ISO" +%s 2>/dev/null); then
+              echo "::warning::Could not read a date out of branch $BRANCH; treating it as stale."
+              STALE="$STALE\n- \`$BRANCH\` (unparseable timestamp)"
+              continue
+            fi
+            AGE_H=$(( (NOW - WHEN) / 3600 ))
+            if [ "$AGE_H" -ge "$GRACE_HOURS" ]; then
+              STALE="$STALE\n- \`$BRANCH\` — ${AGE_H}h old"
+            fi
+          done <<< "$BRANCHES"
+
+          if [ -z "$STALE" ]; then
+            echo "No unresolved sync branches past the grace period ($COUNT present)."
+            exit 0
+          fi
+
+          {
+            echo "## Unresolved upstream sync"
+            echo
+            echo "A conflict branch has been waiting longer than ${GRACE_HOURS}h."
+            echo "While it sits there, \`main\` falls further behind cjpais/Handy and the"
+            echo "model catalog goes stale — the daily sync cannot merge past a conflict."
+            echo
+            printf '%b\n' "$STALE"
+            echo
+            echo "Resolve the newest one, merge it into \`main\`, then delete the branches."
+            echo "This job goes green once no \`sync-upstream-*\` branches remain."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::An upstream sync conflict has been unresolved for over ${GRACE_HOURS}h. See the run summary."
+          exit 1
