@@ -165,7 +165,7 @@ async function checkOrgDrift(catalogIds: string[]): Promise<Finding[]> {
   ];
 }
 
-// ── check 3: is the transcribe-cpp pin behind crates.io? ──────────────────────
+// ── check 3: is the transcribe-cpp pin behind the one upstream chose? ────────
 async function checkCratePin(cargoToml: string): Promise<Finding[]> {
   const pinned = pinnedCrateVersion(cargoToml, CRATE);
   if (!pinned) {
@@ -186,17 +186,75 @@ async function checkCratePin(cargoToml: string): Promise<Finding[]> {
   const latest = meta.crate?.max_stable_version ?? meta.crate?.max_version;
   if (!latest) throw new Error(`crates.io returned no version for ${CRATE}`);
 
-  if (compareVersions(latest, pinned) <= 0) return [];
-  return [
-    {
-      check: "crate-pin",
-      severity: "warn",
-      message:
-        `${CRATE} is pinned at ${pinned} but ${latest} is published. New model ` +
-        "architectures need a crate bump, not just a catalog entry — a model can " +
-        "sit in the catalog and still fail to load without this.",
-    },
-  ];
+  // Measured against upstream's pin, not against crates.io alone.
+  //
+  // This fork does not choose this crate's version — upstream does, and the
+  // daily sync carries the choice across. Firing whenever crates.io moves
+  // ahead therefore reported a state this fork must not act on: bumping ahead
+  // of upstream means diverging on `Cargo.toml`, which is tied for the highest
+  // upstream churn of any file this fork has touched, and buying a permanent
+  // conflict there to lead upstream by a patch release is a bad trade. This
+  // ran red for two straight weeks on exactly that, which is how a signal
+  // becomes furniture.
+  const upstream = await fetchUpstreamPin();
+
+  // Actually actionable: this fork is behind its own source of truth, so a
+  // sync has not landed or a merge kept the wrong side.
+  if (upstream && compareVersions(upstream, pinned) > 0) {
+    return [
+      {
+        check: "crate-pin",
+        severity: "warn",
+        message:
+          `${CRATE} is pinned at ${pinned} here but upstream is on ${upstream}. ` +
+          "The sync should have carried that across — check for a stalled or " +
+          "mis-resolved upstream merge.",
+      },
+    ];
+  }
+
+  // Also actionable even though upstream has not moved: a minor bump is where
+  // new model architectures land, and a model can sit in the catalog and still
+  // fail to load without the crate that understands it. A patch release cannot
+  // add an architecture, so it is not worth a word.
+  const series = (v: string) => v.split(".").slice(0, 2).join(".");
+  if (
+    compareVersions(latest, pinned) > 0 &&
+    compareVersions(series(latest), series(pinned)) !== 0
+  ) {
+    return [
+      {
+        check: "crate-pin",
+        severity: "warn",
+        message:
+          `${CRATE} is pinned at ${pinned} but ${latest} is published` +
+          (upstream ? ` (upstream is still on ${upstream})` : "") +
+          ". A minor bump is where new model architectures arrive — a model can " +
+          "sit in the catalog and still fail to load without it. Prefer waiting " +
+          "for upstream to bump, so this fork does not diverge on Cargo.toml.",
+      },
+    ];
+  }
+
+  return [];
+}
+
+/**
+ * Upstream's pin for the same crate, read straight from its default branch.
+ * Returns null rather than throwing: not knowing what upstream pins is a reason
+ * to fall back to the crates.io comparison, not to fail the run.
+ */
+async function fetchUpstreamPin(): Promise<string | null> {
+  try {
+    const res = await fetch(
+      "https://raw.githubusercontent.com/cjpais/Handy/main/src-tauri/Cargo.toml",
+      { headers: { "user-agent": "handy-plus-model-currency-check" } },
+    );
+    if (!res.ok) return null;
+    return pinnedCrateVersion(await res.text(), CRATE);
+  } catch {
+    return null;
+  }
 }
 
 // ── check 4: catalog changed since the last release we shipped ────────────────

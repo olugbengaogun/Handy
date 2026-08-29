@@ -60,15 +60,27 @@ jobs:
           git config user.name "handy-plus-sync-bot"
           git config user.email "actions@users.noreply.github.com"
 
+      # Needed before the merge, not after it: the conflict resolver below is
+      # a Bun script, and it runs as part of merging rather than as part of
+      # testing the result.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
       - name: Fetch upstream and attempt merge
         id: merge
+        shell: bash
         run: |
+          set -uo pipefail
+
           # Recorded before merging so the generated release notes can list
           # exactly what this sync brought in.
           echo "before=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
           git remote add upstream https://github.com/cjpais/Handy.git
-          git fetch upstream main
+          if ! git fetch upstream main; then
+            echo "::error::Could not fetch upstream; refusing to guess whether anything needs merging."
+            exit 1
+          fi
 
           if git merge-base --is-ancestor upstream/main HEAD; then
             echo "No new upstream commits."
@@ -76,77 +88,155 @@ jobs:
             exit 0
           fi
 
-          # Upstream bumps its own version on every release, and this fork now
-          # bumps the same line on every automatic release - so CJ shipping
-          # anything collides here. Left alone that would stop the automation
-          # roughly every time he releases, which is precisely what it exists
-          # to avoid, and for a line whose resolution is never in doubt: this
-          # fork's numbering is deliberately decoupled, so ours always wins.
+          # Cargo.lock is not merged, it is derived. Text-merging it is
+          # meaningless — two sides inserting different crates into one
+          # alphabetical list collide over nothing, and the "resolution" a
+          # human types is only ever an attempt to guess what cargo would
+          # have written. So ask cargo.
           #
-          # Strictly scoped. Every conflicting line, in every conflicting
-          # file, must be a bare version declaration. One line of anything
-          # else and this refuses and the conflict goes to a human, because a
-          # merge nobody read is only acceptable when there is nothing to read.
-          resolve_version_only_conflict() {
-            local f
-            for f in $(git diff --name-only --diff-filter=U); do
-              awk '
-                function keyof(line,   s) {
-                  s = line
-                  sub(/^[[:space:]]+/, "", s)
-                  if (s ~ /^"/) { sub(/^"/, "", s); sub(/".*$/, "", s); return s }
-                  sub(/[[:space:]]*=.*$/, "", s)
-                  return s
-                }
-                function allowed(k) {
-                  return k == "version" || k == "productName" || k == "identifier" ||
-                         k == "description" || k == "authors" || k == "name"
-                }
-                /^<<<<<<< / { side = 1; delete ours; delete theirs; no = 0; nt = 0; next }
-                /^=======$/ { if (side) { side = 2; next } }
-                /^>>>>>>> / {
-                  if (side) {
-                    # Same keys on both sides, all of them fork identity, or
-                    # this is not a collision anyone can resolve unread.
-                    if (no != nt) bad = 1
-                    for (k in ours) if (!(k in theirs)) bad = 1
-                    for (k in theirs) if (!(k in ours)) bad = 1
-                    side = 0
-                    next
-                  }
-                }
-                side == 1 { k = keyof($0); if (k == "" || !allowed(k)) bad = 1; else { ours[k] = 1; no++ } ; next }
-                side == 2 { k = keyof($0); if (k == "" || !allowed(k)) bad = 1; else { theirs[k] = 1; nt++ } ; next }
-                END { exit bad ? 1 : 0 }
-              ' "$f" || return 1
-            done
+          # Seeded from our side and reconciled with `cargo metadata` rather
+          # than regenerated with `generate-lockfile`: metadata performs the
+          # minimum resolution that satisfies the merged Cargo.toml, where
+          # generate-lockfile would rebuild the graph from scratch and
+          # silently bump every unrelated dependency to its newest compatible
+          # version. An upstream sync must not become an unreviewed dependency
+          # upgrade.
+          regenerate_lockfile() {
+            git checkout --ours -- src-tauri/Cargo.lock || return 1
+            # The lockfile's own format version, not any package's. Cargo
+            # rewrites the whole file in the newest format it understands the
+            # moment it decides an upgrade is warranted, which would turn one
+            # merge into a whole-file rewrite that diverges from upstream's
+            # lockfile permanently — every future sync would then collide on
+            # all of it. Worth catching here, where the answer is still "hand
+            # it to a human", rather than after it has been released.
+            local before after
+            before=$(awk '/^version = [0-9]+$/ { print; exit }' src-tauri/Cargo.lock)
+            cargo metadata --manifest-path src-tauri/Cargo.toml \
+              --format-version 1 > /dev/null || return 1
+            after=$(awk '/^version = [0-9]+$/ { print; exit }' src-tauri/Cargo.lock)
+            if [ "$before" != "$after" ]; then
+              echo "::warning::cargo rewrote Cargo.lock from '$before' to '$after'; leaving this merge to a human."
+              return 1
+            fi
+            git add src-tauri/Cargo.lock || return 1
+          }
 
-            # Keep our side of each conflict block while leaving the rest of
-            # the file as git merged it - `git checkout --ours` would throw
-            # away upstream's other, non-conflicting edits to the same file.
-            for f in $(git diff --name-only --diff-filter=U); do
-              awk '
-                /^<<<<<<< / { side = 1; next }
-                /^=======$/ { if (side) { side = 2; next } }
-                /^>>>>>>> / { if (side) { side = 0; next } }
-                side == 2   { next }
-                            { print }
-              ' "$f" > "$f.resolved" && mv "$f.resolved" "$f"
-              git add "$f"
-            done
+          # Merge $1, auto-resolving only the collisions that have one
+          # defensible answer (see scripts/resolve-sync-conflicts.ts). Returns
+          # non-zero with the merge still in progress if anything is left that
+          # a human has to decide.
+          attempt_merge() {
+            # Named after what it brought in rather than "Merge commit <sha>":
+            # with partial syncs the tip merged is no longer always upstream's
+            # tip, so the history has to say which one it was.
+            local msg
+            msg="Merge upstream cjpais/Handy through $(git rev-parse --short "$1")"
+            if git merge --no-edit -m "$msg" "$1"; then
+              return 0
+            fi
+            if ! bun scripts/resolve-sync-conflicts.ts; then
+              return 1
+            fi
+            if git diff --name-only --diff-filter=U | grep -qx 'src-tauri/Cargo.lock'; then
+              regenerate_lockfile || return 1
+            fi
+            # Belt and braces: the resolver reports success only when it has
+            # staged everything, but committing a merge that still has
+            # unmerged paths would be unrecoverable, so it is checked rather
+            # than trusted.
+            if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+              return 1
+            fi
             git commit --no-edit
           }
 
-          if git merge upstream/main --no-edit; then
-            echo "Merged cleanly, running tests before pushing."
-            echo "status=merged" >> "$GITHUB_OUTPUT"
-          elif resolve_version_only_conflict; then
-            echo "Only the version line collided - kept this fork's version."
-            echo "status=merged" >> "$GITHUB_OUTPUT"
-          else
+          # An upstream commit that genuinely conflicts used to freeze the
+          # whole pipeline: main stopped moving until a human resolved it, and
+          # every commit upstream published in the meantime piled up behind
+          # the same wall. On 2026-08-24 one collision in a *generated* file
+          # cost five days and eleven commits.
+          #
+          # So instead of one all-or-nothing merge, walk upstream's mainline
+          # from the newest commit backwards and take the furthest one that
+          # merges. Newest-first rather than oldest-first on purpose: every
+          # candidate contains all the ones before it, so the first success is
+          # by definition the most progress available, and a collision that
+          # upstream itself later fixed is picked up automatically instead of
+          # being waited on.
+          #
+          # Selection performs the whole merge, including the lockfile, and
+          # then throws it away — it is a rehearsal, not a cheaper check. Doing
+          # less here would mean the rehearsal and the real thing could
+          # disagree, and the only candidate worth trusting is one that has
+          # actually been merged end to end once already.
+          START=$(git rev-parse HEAD)
+          CANDIDATES=$(git rev-list --first-parent HEAD..upstream/main)
+          TOTAL=$(printf '%s\n' "$CANDIDATES" | grep -c . || true)
+          TARGET=""
+          for c in $CANDIDATES; do
+            # A commit already contained in main would merge with "Already up to
+            # date", report success, and hand the release path a version bump
+            # for a merge that never happened. The range above should never
+            # produce one; this makes that a fact rather than a belief.
+            if git merge-base --is-ancestor "$c" HEAD; then
+              continue
+            fi
+            if attempt_merge "$c"; then
+              TARGET="$c"
+              git reset --hard "$START" > /dev/null
+              break
+            fi
+            git merge --abort 2> /dev/null || true
+            git reset --hard "$START" > /dev/null
+          done
+
+          if [ -z "$TARGET" ]; then
+            # Nothing merges, not even the oldest single commit. Reproduce the
+            # full collision so the PR below shows a human the real thing.
+            git merge upstream/main --no-edit || true
             echo "Merge conflict — leaving conflict markers for review."
             echo "status=conflict" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          if ! attempt_merge "$TARGET"; then
+            # The rehearsal merged this exact commit. A second attempt failing
+            # means something outside the repository moved — most plausibly a
+            # transient failure inside `cargo metadata`. Fail the step rather
+            # than falling through to the conflict path: that path stages and
+            # commits conflict markers, and after the abort below there are
+            # none, so it would die on "nothing to commit" and report that
+            # instead of this. main is untouched and tomorrow's run retries.
+            git merge --abort 2> /dev/null || true
+            echo "::error::Merge of $TARGET succeeded during selection and failed when repeated; main untouched."
+            exit 1
+          fi
+
+          # The one thing that must never be true past this point: reporting a
+          # successful sync without having moved. Everything downstream — the
+          # version bump, the tag, the published build — is predicated on new
+          # commits existing, and every one of those steps would happily run on
+          # an unchanged tree and ship a release containing nothing.
+          if [ "$(git rev-parse HEAD)" = "$START" ]; then
+            echo "::error::Merge of $TARGET reported success but main did not move; refusing to release nothing."
+            exit 1
+          fi
+
+          BEHIND=$(git rev-list --count --first-parent "$TARGET..upstream/main")
+          if [ "$BEHIND" -gt 0 ]; then
+            {
+              echo "## Partial upstream sync"
+              echo
+              echo "Merged $((TOTAL - BEHIND)) of $TOTAL new upstream commits, up to \`$(git rev-parse --short "$TARGET")\`."
+              echo "The next commit collides with this fork, so it was left behind rather than"
+              echo "holding up everything in front of it. Tomorrow's run opens a PR for it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Merged up to $TARGET; $BEHIND upstream commit(s) still blocked by a conflict."
+          fi
+
+          echo "Merged $TARGET, running tests before pushing."
+          echo "status=merged" >> "$GITHUB_OUTPUT"
 
       - name: Install system dependencies
         if: steps.merge.outputs.status == 'merged'
@@ -160,10 +250,6 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-
-      - name: Setup Bun
-        if: steps.merge.outputs.status == 'merged'
-        uses: oven-sh/setup-bun@v2
 
       - name: Run test suite on the merged result
         if: steps.merge.outputs.status == 'merged'
@@ -183,6 +269,20 @@ jobs:
             echo "pass=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # Deliberately NOT running `check:translations` here. It reports key
+          # *completeness*, which this fork fails permanently and on purpose —
+          # Handy Plus adds English strings and does not translate them, and
+          # i18next falls back to English, which is why code-quality.yml marks
+          # it continue-on-error. Gating the sync on it would block every sync
+          # forever over a state this fork has already decided is fine.
+          #
+          # The failure mode auto-resolution could actually introduce — a
+          # locale file merged into something malformed — is already covered by
+          # the build above: `src/i18n/index.ts` pulls every
+          # `locales/*/translation.json` in through `import.meta.glob`, so
+          # unparseable JSON fails Vite. Duplicate keys are prevented at the
+          # source, by the member-name check in resolve-sync-conflicts.ts.
 
           if (cd src-tauri && cargo test); then
             echo "pass=true" >> "$GITHUB_OUTPUT"
