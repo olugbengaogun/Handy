@@ -6,7 +6,11 @@ import type {
   AudioDevice,
   TranscribeAcceleratorSetting,
   OrtAcceleratorSetting,
+<<<<<<< HEAD
   CorrectionPair,
+=======
+  ShortcutActivation,
+>>>>>>> upstream/main
   VadBackend,
 } from "@/bindings";
 import { commands } from "@/bindings";
@@ -21,10 +25,13 @@ interface SettingsStore {
   outputDevices: AudioDevice[];
   customSounds: { start: boolean; stop: boolean };
   postProcessModelOptions: Record<string, string[]>;
+  // null until loadUpdateChecksLocked() resolves
+  updateChecksLocked: boolean | null;
 
   // Actions
   initialize: () => Promise<void>;
   loadDefaultSettings: () => Promise<void>;
+  loadUpdateChecksLocked: () => Promise<void>;
   updateSetting: <K extends keyof Settings>(
     key: K,
     value: Settings[K],
@@ -95,7 +102,10 @@ const settingUpdaters: {
     commands.changeShowWhatsNewOnUpdateSetting(value as boolean),
   whats_new_last_seen_version: (value) =>
     commands.changeWhatsNewLastSeenVersionSetting(value as string),
-  push_to_talk: (value) => commands.changePttSetting(value as boolean),
+  shortcut_activation: (value) =>
+    commands.changeShortcutActivationSetting(value as ShortcutActivation),
+  hold_threshold_ms: (value) =>
+    commands.changeHoldThresholdMsSetting(value as number),
   selected_microphone: (value) =>
     commands.setSelectedMicrophone(
       (value as string) === "Default" || value === null
@@ -206,6 +216,7 @@ export const useSettingsStore = create<SettingsStore>()(
     outputDevices: [],
     customSounds: { start: false, stop: false },
     postProcessModelOptions: {},
+    updateChecksLocked: null,
 
     // Internal setters
     setSettings: (settings) => set({ settings }),
@@ -611,9 +622,28 @@ export const useSettingsStore = create<SettingsStore>()(
       }
     },
 
+    // Check whether update checks are locked by system configuration
+    // (e.g. HANDY_DISABLE_UPDATER, set by the Nix package)
+    loadUpdateChecksLocked: async () => {
+      try {
+        const locked = await commands.isUpdateChecksLocked();
+        set({ updateChecksLocked: locked });
+      } catch (error) {
+        console.error("Failed to check update checks lock state:", error);
+        // Fail open: an unknown lock state means "not locked", otherwise the
+        // update checker waits for it forever and checks never start.
+        set({ updateChecksLocked: false });
+      }
+    },
+
     // Initialize everything
     initialize: async () => {
-      const { refreshSettings, checkCustomSounds, loadDefaultSettings } = get();
+      const {
+        refreshSettings,
+        checkCustomSounds,
+        loadDefaultSettings,
+        loadUpdateChecksLocked,
+      } = get();
 
       // Note: Audio devices are NOT refreshed here. The frontend (App.tsx)
       // is responsible for calling refreshAudioDevices/refreshOutputDevices
@@ -623,6 +653,7 @@ export const useSettingsStore = create<SettingsStore>()(
         loadDefaultSettings(),
         refreshSettings(),
         checkCustomSounds(),
+        loadUpdateChecksLocked(),
       ]);
 
       // Re-fetch settings when the backend changes them (e.g. language

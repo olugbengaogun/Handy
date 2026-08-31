@@ -276,7 +276,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "check_updates" => {
                 let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
+                if settings::update_checks_effectively_enabled(&settings) {
                     show_main_window(app);
                     let _ = app.emit("check-for-updates", ());
                 }
@@ -356,7 +356,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 #[specta::specta]
 fn trigger_update_check(app: AppHandle) -> Result<(), String> {
     let settings = settings::get_settings(&app);
-    if !settings.update_checks_enabled {
+    if !settings::update_checks_effectively_enabled(&settings) {
         return Ok(());
     }
     app.emit("check-for-updates", ())
@@ -632,7 +632,8 @@ pub fn run(cli_args: CliArgs) {
         .commands(collect_commands![
             shortcut::change_binding,
             shortcut::reset_binding,
-            shortcut::change_ptt_setting,
+            shortcut::change_shortcut_activation_setting,
+            shortcut::change_hold_threshold_ms_setting,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,
@@ -698,6 +699,7 @@ pub fn run(cli_args: CliArgs) {
             show_main_window_command,
             commands::cancel_operation,
             commands::is_portable,
+            commands::is_update_checks_locked,
             commands::get_app_dir_path,
             commands::get_app_settings,
             commands::get_default_settings,
