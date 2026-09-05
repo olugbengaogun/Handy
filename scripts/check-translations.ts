@@ -1,12 +1,6 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import {
-  leafPaths,
-  rebrand,
-  valueAt,
-  type TranslationTree,
-} from "../src/i18n/overlay";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,16 +16,12 @@ interface ValidationResult {
   extra: string[][];
 }
 
-function getAllLanguages(): string[] {
+function getLanguages(): string[] {
   const entries = fs.readdirSync(LOCALES_DIR, { withFileTypes: true });
   return entries
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && entry.name !== REFERENCE_LANG)
     .map((entry) => entry.name)
     .sort();
-}
-
-function getLanguages(): string[] {
-  return getAllLanguages().filter((lang) => lang !== REFERENCE_LANG);
 }
 
 const LANGUAGES = getLanguages();
@@ -97,128 +87,6 @@ function loadTranslationFile(lang: string): TranslationData | null {
     console.error(`  ${(error as Error).message}`);
     return null;
   }
-}
-
-function loadOverlayFile(lang: string): TranslationData | null {
-  const filePath = path.join(LOCALES_DIR, lang, "plus.json");
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as TranslationData;
-  } catch (error) {
-    console.error(colorize(`✗ Error loading ${lang}/plus.json:`, "red"));
-    console.error(`  ${(error as Error).message}`);
-    return null;
-  }
-}
-
-/**
- * Audit the Handy Plus overlays (see src/i18n/overlay.ts).
- *
- * `translation.json` is upstream's file, byte for byte; `plus.json` carries
- * everything this fork changes. The comparison above therefore measures what
- * it is supposed to measure again - how complete the *translations* are -
- * instead of reporting this fork's untranslated English additions as 122
- * missing keys in all 23 languages, which is what made it fail permanently and
- * why it is `continue-on-error` in code-quality.yml.
- *
- * What is checked here is the one thing the split can silently get wrong: an
- * override that has stopped matching the upstream string it rebrands. In-file
- * rebranding surfaced an upstream reword as a merge conflict; an overlay does
- * not, so it is surfaced here instead.
- *
- * Returns true if every override still lines up.
- */
-function auditOverlays(): boolean {
-  const overlaid = getAllLanguages().filter((lang) =>
-    fs.existsSync(path.join(LOCALES_DIR, lang, "plus.json")),
-  );
-  if (overlaid.length === 0) return true;
-
-  console.log(colorize("\nHandy Plus overlay (plus.json):", "blue"));
-  console.log("─".repeat(60));
-
-  let ok = true;
-  for (const lang of overlaid) {
-    const base = loadTranslationFile(lang);
-    const overlay = loadOverlayFile(lang);
-    if (!base || !overlay) {
-      ok = false;
-      continue;
-    }
-
-    // Held as path arrays, never as joined strings: four real keys contain a
-    // dot (`parakeet-tdt-0.6b-v2`), so splitting a joined path back apart to
-    // look a value up would report `undefined` for exactly the keys most in
-    // need of a readable diagnostic.
-    const drifted: string[][] = [];
-    const shapeClash: string[][] = [];
-    let overrides = 0;
-    let additions = 0;
-
-    for (const keyPath of leafPaths(overlay as TranslationTree)) {
-      const upstream = valueAt(base as TranslationTree, keyPath);
-      if (upstream === undefined) {
-        additions++;
-        continue;
-      }
-      overrides++;
-      if (typeof upstream !== "string") {
-        shapeClash.push(keyPath);
-      } else if (
-        valueAt(overlay as TranslationTree, keyPath) !== rebrand(upstream)
-      ) {
-        drifted.push(keyPath);
-      }
-    }
-
-    console.log(
-      `${lang.toUpperCase()}: ${overrides} override(s), ${additions} fork-only key(s)`,
-    );
-
-    for (const keyPath of shapeClash) {
-      ok = false;
-      console.log(
-        colorize(
-          `  ✗ ${keyPath.join(".")}: overrides a group, not a string`,
-          "red",
-        ),
-      );
-    }
-    for (const keyPath of drifted) {
-      ok = false;
-      console.log(
-        colorize(
-          `  ✗ ${keyPath.join(".")}: no longer a plain rebrand of upstream`,
-          "red",
-        ),
-      );
-      console.log(
-        `      upstream: ${JSON.stringify(valueAt(base as TranslationTree, keyPath))}`,
-      );
-      console.log(
-        `      ours:     ${JSON.stringify(valueAt(overlay as TranslationTree, keyPath))}`,
-      );
-    }
-    if (drifted.length === 0 && shapeClash.length === 0) {
-      console.log(colorize("  ✓ every override is a plain rebrand", "green"));
-    }
-  }
-
-  if (!ok) {
-    console.log(
-      colorize(
-        "\n  Upstream reworded a string this fork overrides. Re-derive the",
-        "yellow",
-      ),
-    );
-    console.log(
-      colorize(
-        "  override from the new upstream text, or record why it differs.",
-        "yellow",
-      ),
-    );
-  }
-  return ok;
 }
 
 function validateTranslations(): void {
@@ -328,13 +196,6 @@ function validateTranslations(): void {
   }
 
   console.log("─".repeat(60));
-
-  // Runs unconditionally, and its verdict is folded into the exit code: a
-  // drifted override is a real defect (stale English shipped to users) and
-  // must not be hidden behind an unrelated language being incomplete.
-  if (!auditOverlays()) {
-    hasErrors = true;
-  }
 
   // Summary
   const validCount = Object.values(results).filter((r) => r.valid).length;

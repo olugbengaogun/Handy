@@ -110,8 +110,15 @@ assert.strictEqual(
   ]);
 }
 
-// A shape this cannot read exactly is refused rather than guessed at.
-for (const unreadable of ["use a::{b::{c, d}, e};", "use a::{self, B};"]) {
+// A shape this cannot read exactly is refused rather than guessed at. The
+// unclosed group matters most: without an explicit guard the brace slice
+// produces garbage member names, and garbage names make the duplicate-import
+// checks pass on input they should have refused.
+for (const unreadable of [
+  "use a::{b::{c, d}, e};",
+  "use a::{self, B};",
+  "use a::{b;",
+]) {
   assert.strictEqual(
     isUseBlockHunk(hunk([unreadable], [], ["use crate::z::Z;"])),
     false,

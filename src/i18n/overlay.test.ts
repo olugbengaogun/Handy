@@ -8,6 +8,7 @@ import {
   buildLocaleResources,
   mergeOverlay,
   leafPaths,
+  shapeClashes,
   valueAt,
   rebrand,
   type TranslationTree,
@@ -57,7 +58,7 @@ assert.deepStrictEqual(
 );
 
 // A shape disagreement resolves to the overlay rather than throwing, because
-// something has to render. check-translations.ts reports it.
+// at runtime something has to render. shapeClashes below is what reports it.
 assert.deepStrictEqual(mergeOverlay({ a: { b: "1" } }, { a: "flat" }), {
   a: "flat",
 });
@@ -107,6 +108,34 @@ assert.deepStrictEqual(
   { en: { a: "1" } },
 );
 
+// --------------------------------------------------------------- shapeClashes
+
+// An ordinary override and an ordinary addition are not clashes.
+assert.deepStrictEqual(
+  shapeClashes(
+    { a: "up", g: { x: "1" } },
+    { a: "fork", g: { y: "2" }, n: "new" },
+  ),
+  [],
+);
+
+// An overlay group where upstream has a string. This is the dangerous one: leaf
+// by leaf it looks like a plain addition, and merging it deletes upstream's
+// string with nothing reporting it.
+assert.deepStrictEqual(shapeClashes({ a: "up" }, { a: { b: "fork" } }), [
+  ["a", "b"],
+]);
+
+// An overlay string where upstream has a group - the whole group would vanish.
+assert.deepStrictEqual(shapeClashes({ a: { b: "up" } }, { a: "fork" }), [
+  ["a"],
+]);
+
+// ...and the merge really does destroy it, which is why the check exists.
+assert.deepStrictEqual(mergeOverlay({ a: "up" }, { a: { b: "fork" } }), {
+  a: { b: "fork" },
+});
+
 // -------------------------------------------------------------------- rebrand
 
 assert.strictEqual(
@@ -148,6 +177,13 @@ for (const lang of locales) {
   const overlay = JSON.parse(
     fs.readFileSync(overlayPath, "utf8"),
   ) as TranslationTree;
+
+  assert.deepStrictEqual(
+    shapeClashes(base, overlay).map((p) => p.join(".")),
+    [],
+    `${lang}/plus.json puts a group where upstream has a string, or the ` +
+      `reverse. Merging that deletes upstream copy silently.`,
+  );
 
   for (const p of leafPaths(overlay)) {
     const upstream = valueAt(base, p);

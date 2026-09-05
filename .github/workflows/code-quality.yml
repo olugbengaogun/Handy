@@ -59,6 +59,26 @@ jobs:
       - name: Check model language coverage
         run: bun run check:model-languages
 
+      # There is no unit-test runner in this repo: every `*.test.ts` is a plain
+      # script that asserts and exits non-zero. Nothing ran them, so they were
+      # decorative - portableInstaller.test.ts had been sitting there green by
+      # assumption. They are this fork's only mechanical guard on two things
+      # that fail silently: an i18n override drifting away from the upstream
+      # string it rebrands, and the sync resolver deciding a conflict a human
+      # should have seen.
+      #
+      # Every test runs even after one fails, because "the first failure" is
+      # rarely the whole picture when a locale file has moved underneath them.
+      - name: Run standalone tests
+        run: |
+          status=0
+          for t in $(git ls-files '*.test.ts'); do
+            echo "::group::$t"
+            bun "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
       - name: Run ESLint
         run: bun run lint
 

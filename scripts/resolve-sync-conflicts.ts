@@ -366,6 +366,10 @@ function useBoundNames(line: string): string[] | null {
   const body = useBody(line);
   if ((body.match(/\{/g) || []).length > 1) return null;
   const brace = body.indexOf("{");
+  // An unclosed or inverted group is not Rust this can read. Without this the
+  // slice below silently produces garbage member names, and garbage names make
+  // the duplicate-import checks pass on input they should have refused.
+  if (brace >= 0 && body.lastIndexOf("}") < brace) return null;
   const items =
     brace >= 0
       ? body.slice(brace + 1, body.lastIndexOf("}")).split(",")

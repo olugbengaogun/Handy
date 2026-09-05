@@ -18,8 +18,12 @@
  *
  * The reverse risk - upstream rewording a string this fork overrides, and the
  * override silently keeping the old text - is covered by the audit in
- * `scripts/check-translations.ts`, which re-derives every override from the
- * current upstream string and reports any that no longer match.
+ * `overlay.test.ts`, which re-derives every override from the current upstream
+ * string and fails on any that no longer match. Deliberately *not* bolted onto
+ * `scripts/check-translations.ts`: that file is upstream's, byte for byte, and
+ * a fork-only audit living inside it would be a new merge conflict every time
+ * CJ touches it - which is the exact problem this whole module exists to
+ * remove.
  */
 
 export type TranslationNode =
@@ -94,7 +98,12 @@ export function mergeOverlay(
   for (const key of Object.keys(overlay)) {
     if (key === "__proto__") continue;
     const patch = overlay[key];
-    const current = out[key];
+    // `hasOwn` rather than a bare read: for a key the base does not have but
+    // `Object.prototype` does - "constructor", "toString" - a bare `out[key]`
+    // returns the inherited function instead of undefined. Every such value is
+    // rejected by isMergeable today, so the outcome happens to be right, but
+    // only by accident, and an accident is not a thing to leave in a merge.
+    const current = hasOwn(out, key) ? out[key] : undefined;
     out[key] =
       isMergeable(current) && isMergeable(patch)
         ? mergeOverlay(current, patch)
@@ -169,15 +178,58 @@ export function valueAt(
 }
 
 /**
- * The product name this fork ships under, and the upstream name it replaces.
+ * Overlay paths whose *shape* disagrees with the base file, in either
+ * direction. Both are mistakes, and both are silent without this:
  *
- * Applied as a whole-word substitution that refuses to touch a "Handy" that is
- * already followed by "Plus", which makes it idempotent: re-running it over an
- * already-rebranded string is a no-op rather than "Handy Plus Plus".
+ *   - an overlay leaf where upstream has a group -> the whole group vanishes
+ *   - an overlay group where upstream has a leaf -> that string vanishes
+ *
+ * The second is the one worth the code. It looks exactly like an ordinary
+ * addition when checked leaf by leaf, because the path simply is not present
+ * in the base file - so the naive audit passes it, and an upstream string
+ * disappears from the app with nothing anywhere reporting it. It has to be
+ * caught by walking the *prefixes*: a prefix that lands on a leaf in the base
+ * is the collision.
+ *
+ * A path the base does not have at all is not a clash - that is what an
+ * addition is.
  */
-export const UPSTREAM_PRODUCT_NAME = "Handy";
+export function shapeClashes(
+  base: TranslationTree,
+  overlay: TranslationTree,
+): string[][] {
+  const out: string[][] = [];
+  for (const path of leafPaths(overlay)) {
+    let node: unknown = base;
+    let hitLeaf = false;
+    for (const key of path) {
+      if (!isMergeable(node)) {
+        hitLeaf = true;
+        break;
+      }
+      if (!hasOwn(node, key)) {
+        node = undefined;
+        break;
+      }
+      node = (node as TranslationTree)[key];
+    }
+    if (hitLeaf || isMergeable(node)) out.push(path);
+  }
+  return out;
+}
+
+/** The product name this fork ships under, in place of upstream's "Handy". */
 export const PRODUCT_NAME = "Handy Plus";
 
+/**
+ * Upstream's English with this fork's product name in it.
+ *
+ * Whole words only, and never a "Handy" already followed by "Plus", which
+ * makes it idempotent: re-running it over an already-rebranded string is a
+ * no-op rather than "Handy Plus Plus". That property is what lets the audit
+ * re-derive an override from the current upstream string and compare, instead
+ * of having to record what the string used to say.
+ */
 export function rebrand(text: string): string {
   return text.replace(/\bHandy\b(?! Plus)/g, PRODUCT_NAME);
 }
