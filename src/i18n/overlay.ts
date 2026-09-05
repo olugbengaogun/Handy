@@ -146,6 +146,22 @@ export function buildLocaleResources(
     const lang = localeOf(path);
     if (lang) resources[lang] = mergeOverlay(module.default, overlays[lang]);
   }
+
+  // An overlay that matched no base locale is the one failure here with no
+  // symptom: the app renders upstream's English, correctly, in the right
+  // language, and looks entirely fine. Everything else about this pairing
+  // fails loudly - both globs run through the same `localeOf`, so a change in
+  // how Vite keys them would mangle the base locales too and take the language
+  // picker with it. What stays quiet is a `plus.json` in a directory whose name
+  // is a typo, so that is what gets said out loud.
+  for (const lang of Object.keys(overlays)) {
+    if (!(lang in resources)) {
+      console.warn(
+        `Locale overlay "${lang}/plus.json" matches no ${lang}/translation.json ` +
+          `and was ignored - check the directory name.`,
+      );
+    }
+  }
   return resources;
 }
 

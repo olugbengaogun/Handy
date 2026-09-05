@@ -99,14 +99,50 @@ assert.deepStrictEqual(mergeOverlay({ a: { b: "1" } }, { a: "flat" }), {
 }
 
 // An overlay for a language with no base file contributes nothing rather than
-// inventing a half-populated locale in the language picker.
-assert.deepStrictEqual(
-  buildLocaleResources(
-    { "./locales/en/translation.json": { default: { a: "1" } } },
-    { "./locales/xx/plus.json": { default: { a: "2" } } },
-  ),
-  { en: { a: "1" } },
-);
+// inventing a half-populated locale in the language picker - and says so,
+// because an ignored overlay is otherwise indistinguishable from a correct app.
+{
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    assert.deepStrictEqual(
+      buildLocaleResources(
+        { "./locales/en/translation.json": { default: { a: "1" } } },
+        { "./locales/xx/plus.json": { default: { a: "2" } } },
+      ),
+      { en: { a: "1" } },
+    );
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.strictEqual(
+    warnings.length,
+    1,
+    "an orphaned overlay must be reported",
+  );
+  assert.match(warnings[0], /xx\/plus\.json/);
+}
+
+// The ordinary case must stay silent - a warning nobody can act on is a
+// warning everybody learns to ignore.
+{
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
+  try {
+    buildLocaleResources(
+      {
+        "./locales/en/translation.json": { default: { a: "1" } },
+        "./locales/de/translation.json": { default: { a: "2" } },
+      },
+      { "./locales/en/plus.json": { default: { a: "fork" } } },
+    );
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.deepStrictEqual(warnings, []);
+}
 
 // --------------------------------------------------------------- shapeClashes
 
