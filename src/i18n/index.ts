@@ -2,7 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale } from "@tauri-apps/plugin-os";
 import { LANGUAGE_METADATA } from "./languages";
-import { mergeOverlay, type TranslationTree } from "./overlay";
+import { buildLocaleResources, type TranslationTree } from "./overlay";
 import { commands } from "@/bindings";
 import {
   getLanguageDirection,
@@ -29,29 +29,15 @@ const overlayModules = import.meta.glob<{ default: TranslationTree }>(
   { eager: true },
 );
 
-// The directory name, taken structurally rather than by pattern-matching the
-// whole path: the glob above already guarantees the shape, and the two globs
-// must agree on how a locale is named or an overlay would silently attach to
-// nothing.
-const localeOf = (path: string) => path.split("/").slice(-2, -1)[0];
-
-const overlays: Record<string, TranslationTree> = {};
-for (const [path, module] of Object.entries(overlayModules)) {
-  const langCode = localeOf(path);
-  if (langCode) {
-    overlays[langCode] = module.default;
-  }
-}
-
-// Build resources from discovered locale files
+// One resource tree per language, upstream's file with this fork's overlay on
+// top. The pairing lives in ./overlay.ts so it is reachable from a plain
+// script and therefore testable; this module cannot be imported outside the
+// app because of the Tauri plugins above.
 const resources: Record<string, { translation: TranslationTree }> = {};
-for (const [path, module] of Object.entries(localeModules)) {
-  const langCode = localeOf(path);
-  if (langCode) {
-    resources[langCode] = {
-      translation: mergeOverlay(module.default, overlays[langCode]),
-    };
-  }
+for (const [lang, tree] of Object.entries(
+  buildLocaleResources(localeModules, overlayModules),
+)) {
+  resources[lang] = { translation: tree };
 }
 
 // Build supported languages list from discovered locales + metadata

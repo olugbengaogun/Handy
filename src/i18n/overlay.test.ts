@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  buildLocaleResources,
   mergeOverlay,
   leafPaths,
   valueAt,
@@ -70,6 +71,41 @@ assert.deepStrictEqual(mergeOverlay({ a: { b: "1" } }, { a: "flat" }), {
   assert.strictEqual(({} as Record<string, unknown>).polluted, undefined);
   assert.strictEqual(Object.getPrototypeOf(merged), Object.prototype);
 }
+
+// ------------------------------------------------------ buildLocaleResources
+//
+// The wiring index.ts uses. Its one real failure mode is silent: if the two
+// globs disagreed about how a locale is named, every overlay would attach to
+// nothing and the app would render upstream's English with no error anywhere.
+
+{
+  const resources = buildLocaleResources(
+    {
+      "./locales/en/translation.json": { default: { a: "up", b: "keep" } },
+      "./locales/de/translation.json": { default: { a: "de-up" } },
+      "./locales/zh-TW/translation.json": { default: { a: "tw" } },
+    },
+    { "./locales/en/plus.json": { default: { a: "fork", c: "added" } } },
+  );
+
+  assert.deepStrictEqual(Object.keys(resources).sort(), ["de", "en", "zh-TW"]);
+  assert.deepStrictEqual(resources.en, { a: "fork", b: "keep", c: "added" });
+  // A locale with no overlay is passed through untouched - 23 of 24 today.
+  assert.deepStrictEqual(resources.de, { a: "de-up" });
+  // A hyphenated locale directory must survive intact, or zh-TW loses its
+  // overlay while looking like it has one.
+  assert.deepStrictEqual(resources["zh-TW"], { a: "tw" });
+}
+
+// An overlay for a language with no base file contributes nothing rather than
+// inventing a half-populated locale in the language picker.
+assert.deepStrictEqual(
+  buildLocaleResources(
+    { "./locales/en/translation.json": { default: { a: "1" } } },
+    { "./locales/xx/plus.json": { default: { a: "2" } } },
+  ),
+  { en: { a: "1" } },
+);
 
 // -------------------------------------------------------------------- rebrand
 

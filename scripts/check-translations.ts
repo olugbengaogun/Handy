@@ -146,8 +146,12 @@ function auditOverlays(): boolean {
       continue;
     }
 
-    const drifted: string[] = [];
-    const shapeClash: string[] = [];
+    // Held as path arrays, never as joined strings: four real keys contain a
+    // dot (`parakeet-tdt-0.6b-v2`), so splitting a joined path back apart to
+    // look a value up would report `undefined` for exactly the keys most in
+    // need of a readable diagnostic.
+    const drifted: string[][] = [];
+    const shapeClash: string[][] = [];
     let overrides = 0;
     let additions = 0;
 
@@ -159,11 +163,11 @@ function auditOverlays(): boolean {
       }
       overrides++;
       if (typeof upstream !== "string") {
-        shapeClash.push(keyPath.join("."));
+        shapeClash.push(keyPath);
       } else if (
         valueAt(overlay as TranslationTree, keyPath) !== rebrand(upstream)
       ) {
-        drifted.push(keyPath.join("."));
+        drifted.push(keyPath);
       }
     }
 
@@ -174,22 +178,25 @@ function auditOverlays(): boolean {
     for (const keyPath of shapeClash) {
       ok = false;
       console.log(
-        colorize(`  ✗ ${keyPath}: overrides a group, not a string`, "red"),
+        colorize(
+          `  ✗ ${keyPath.join(".")}: overrides a group, not a string`,
+          "red",
+        ),
       );
     }
     for (const keyPath of drifted) {
       ok = false;
       console.log(
         colorize(
-          `  ✗ ${keyPath}: no longer a plain rebrand of upstream`,
+          `  ✗ ${keyPath.join(".")}: no longer a plain rebrand of upstream`,
           "red",
         ),
       );
       console.log(
-        `      upstream: ${JSON.stringify(valueAt(base as TranslationTree, keyPath.split(".")))}`,
+        `      upstream: ${JSON.stringify(valueAt(base as TranslationTree, keyPath))}`,
       );
       console.log(
-        `      ours:     ${JSON.stringify(valueAt(overlay as TranslationTree, keyPath.split(".")))}`,
+        `      ours:     ${JSON.stringify(valueAt(overlay as TranslationTree, keyPath))}`,
       );
     }
     if (drifted.length === 0 && shapeClash.length === 0) {

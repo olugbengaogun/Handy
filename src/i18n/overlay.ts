@@ -104,6 +104,42 @@ export function mergeOverlay(
   return out;
 }
 
+/**
+ * Turn the two `import.meta.glob` results into i18next's per-language
+ * resources, pairing each `locales/<lang>/translation.json` with the
+ * `locales/<lang>/plus.json` beside it.
+ *
+ * Lives here rather than inline in index.ts so that it is reachable from a
+ * plain script: index.ts pulls in the Tauri plugins and cannot be imported
+ * outside the app, and a wiring step that only the app can run is a wiring
+ * step nothing verifies.
+ *
+ * The language is the directory name, taken structurally rather than by
+ * pattern-matching the path, because the two globs have to agree on it - an
+ * overlay that attaches to a slightly different key than its base file
+ * attaches to nothing at all, silently, and the app renders upstream's
+ * English with no error anywhere.
+ */
+export function buildLocaleResources(
+  localeModules: Record<string, { default: TranslationTree }>,
+  overlayModules: Record<string, { default: TranslationTree }>,
+): Record<string, TranslationTree> {
+  const localeOf = (path: string) => path.split("/").slice(-2, -1)[0];
+
+  const overlays: Record<string, TranslationTree> = {};
+  for (const [path, module] of Object.entries(overlayModules)) {
+    const lang = localeOf(path);
+    if (lang) overlays[lang] = module.default;
+  }
+
+  const resources: Record<string, TranslationTree> = {};
+  for (const [path, module] of Object.entries(localeModules)) {
+    const lang = localeOf(path);
+    if (lang) resources[lang] = mergeOverlay(module.default, overlays[lang]);
+  }
+  return resources;
+}
+
 /** Every leaf path in a translation tree, as `["settings", "about", "title"]`. */
 export function leafPaths(
   tree: TranslationTree,
