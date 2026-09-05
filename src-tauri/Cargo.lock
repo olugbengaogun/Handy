@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "handy"
-version = "1.5.2"
+version = "1.5.3"
 dependencies = [
  "anyhow",
  "chrono",
