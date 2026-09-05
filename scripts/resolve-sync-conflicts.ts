@@ -152,7 +152,7 @@ function mergeFileConflicted(s: Stages): string {
 /* Hunk-level classification                                           */
 /* ------------------------------------------------------------------ */
 
-type Hunk = { ours: string[]; base: string[]; theirs: string[] };
+export type Hunk = { ours: string[]; base: string[]; theirs: string[] };
 type Piece = { kind: "text"; lines: string[] } | { kind: "hunk"; hunk: Hunk };
 
 /**
@@ -162,7 +162,7 @@ type Piece = { kind: "text"; lines: string[] } | { kind: "hunk"; hunk: Hunk };
  * sides rewrote the same thing" (not mergeable), and guessing between those
  * two is exactly how an automated merge eats someone's work.
  */
-function parseDiff3(text: string): Piece[] | null {
+export function parseDiff3(text: string): Piece[] | null {
   const lines = text.split("\n");
   const pieces: Piece[] = [];
   let acc: string[] = [];
@@ -253,7 +253,7 @@ function keyOf(line: string): string | null {
   return null;
 }
 
-function isIdentityHunk(h: Hunk): boolean {
+export function isIdentityHunk(h: Hunk): boolean {
   const keys = (ls: string[]) => {
     const out: string[] = [];
     for (const l of ls) {
@@ -290,7 +290,7 @@ function isIdentityHunk(h: Hunk): boolean {
  * right, and concatenating the latter produces plausible nonsense that
  * compiles.
  */
-function isListAppendHunk(h: Hunk): boolean {
+export function isListAppendHunk(h: Hunk): boolean {
   const meaningful = (ls: string[]) => ls.filter((l) => l.trim() !== "");
   const ours = meaningful(h.ours);
   const theirs = meaningful(h.theirs);
@@ -324,11 +324,166 @@ function isListAppendHunk(h: Hunk): boolean {
 }
 
 /**
+ * A single-line Rust `use` statement, and nothing else - no attribute, no
+ * `pub use` re-export chain spanning lines, no trailing comment.
+ */
+const USE_LINE = /^\s*(?:pub(?:\([^)]*\))?\s+)?use\s+[^;]+;\s*$/;
+
+/**
+ * The module path a `use` line imports *from*: everything between `use` and
+ * either the brace list or the terminating semicolon.
+ *
+ *     use log::{debug, warn};        -> "log"
+ *     use crate::utils;              -> "crate::utils"
+ *     use std::sync::OnceLock;       -> "std::sync::OnceLock"
+ */
+function usePathKey(line: string): string {
+  const body = useBody(line);
+  const brace = body.indexOf("{");
+  const head = brace >= 0 ? body.slice(0, brace) : body;
+  return head.trim().replace(/::$/, "");
+}
+
+function useBody(line: string): string {
+  return line
+    .trim()
+    .replace(/^(?:pub(?:\([^)]*\))?\s+)?use\s+/, "")
+    .replace(/;\s*$/, "");
+}
+
+/**
+ * The names a `use` line binds in the file's namespace - what two imports have
+ * to disagree about for the result not to compile:
+ *
+ *     use log::{debug, warn};   -> ["debug", "warn"]
+ *     use crate::utils;         -> ["utils"]
+ *     use std::fmt as f;        -> ["f"]
+ *
+ * `null` for anything this cannot read exactly (a nested group, a `self`
+ * re-export), which makes the hunk unmergeable rather than guessed at.
+ */
+function useBoundNames(line: string): string[] | null {
+  const body = useBody(line);
+  if ((body.match(/\{/g) || []).length > 1) return null;
+  const brace = body.indexOf("{");
+  // An unclosed or inverted group is not Rust this can read. Without this the
+  // slice below silently produces garbage member names, and garbage names make
+  // the duplicate-import checks pass on input they should have refused.
+  if (brace >= 0 && body.lastIndexOf("}") < brace) return null;
+  const items =
+    brace >= 0
+      ? body.slice(brace + 1, body.lastIndexOf("}")).split(",")
+      : [body];
+  const names: string[] = [];
+  for (const raw of items) {
+    const item = raw.trim();
+    if (!item) continue;
+    // `use a::{self, B}` binds the parent module's own name, which is not
+    // written in the item. Not worth reconstructing.
+    if (item === "self" || item.endsWith("::self")) return null;
+    const alias = item.match(/\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (alias) {
+      names.push(alias[1]);
+      continue;
+    }
+    const last = item.split("::").pop()?.trim();
+    if (!last) return null;
+    names.push(last);
+  }
+  return names.length > 0 ? names : null;
+}
+
+/**
+ * Both sides edited the same block of `use` statements.
+ *
+ * This is the most common mechanical collision a long-lived fork has, and it
+ * is never a disagreement: `git` merges a *region*, so upstream adding an
+ * import on one line and this fork widening the import on the line below are
+ * one conflict about nothing. It is what blocked the 2026-08-31 sync alongside
+ * the locale file - upstream added `use crate::utils;` while this fork had
+ * grown `use log::{debug, warn};` into `use log::{debug, error, warn};`.
+ *
+ * Unlike `isListAppendHunk` this does not require an empty base, because the
+ * interesting case *is* a modified base line. That is safe only because the
+ * result is computed as a set operation over the three sides rather than by
+ * concatenating them:
+ *
+ *   - a base line both sides still have  -> kept
+ *   - a base line either side dropped    -> dropped (a deletion is a decision)
+ *   - a line only one side introduced    -> added
+ *
+ * which is exactly what a line-wise 3-way merge means, applied to a region git
+ * declined to split. Restricted to plain single-line `use` statements so that
+ * "the whole hunk is imports" is a syntactic fact and not an inference.
+ */
+export function isUseBlockHunk(h: Hunk): boolean {
+  const sides = [h.ours, h.base, h.theirs];
+  // A blank line anywhere means the hunk carries grouping this cannot
+  // reproduce, and silently restyling an import block would be a permanent
+  // cosmetic divergence from upstream that re-conflicts forever.
+  if (sides.some((ls) => ls.some((l) => !USE_LINE.test(l)))) return false;
+  if (sides.every((ls) => ls.length === 0)) return false;
+
+  const inBase = new Set(h.base.map((l) => l.trim()));
+  const ourAdds = h.ours.filter((l) => !inBase.has(l.trim()));
+  // A line both sides introduced identically is not a disagreement - the merge
+  // below emits it once - so it is excluded before the collision checks.
+  const ourAddText = new Set(ourAdds.map((l) => l.trim()));
+  const theirAdds = h.theirs.filter(
+    (l) => !inBase.has(l.trim()) && !ourAddText.has(l.trim()),
+  );
+  // With no additions on either side the hunk is pure deletion, and the set
+  // merge below - keep what both sides kept - is exactly right for it; the
+  // checks that follow are no-ops in that case.
+
+  // A glob changes what every unqualified name in the file resolves to. Two
+  // sides adding imports around one is not a set operation over lines.
+  if ([...ourAdds, ...theirAdds].some((l) => l.includes("*"))) return false;
+
+  // Two sides introducing different imports from the same module would emit
+  // two `use log::{...}` lines; two introducing the same *name* from different
+  // modules would bind it twice. The first is usually harmless and sometimes
+  // E0252, the second always is - and neither is a merge this can claim to
+  // have done correctly, so both are refused.
+  const ourKeys = new Set(ourAdds.map(usePathKey));
+  if (theirAdds.some((l) => ourKeys.has(usePathKey(l)))) return false;
+
+  const ourNames = new Set<string>();
+  for (const l of ourAdds) {
+    const names = useBoundNames(l);
+    if (!names) return false;
+    for (const n of names) ourNames.add(n);
+  }
+  for (const l of theirAdds) {
+    const names = useBoundNames(l);
+    if (!names) return false;
+    if (names.some((n) => ourNames.has(n))) return false;
+  }
+
+  return true;
+}
+
+export function mergeUseBlock(h: Hunk): string[] {
+  const inBase = new Set(h.base.map((l) => l.trim()));
+  const inOurs = new Set(h.ours.map((l) => l.trim()));
+  const inTheirs = new Set(h.theirs.map((l) => l.trim()));
+  // Upstream's order is the skeleton, with this fork's own additions appended.
+  // Not cosmetic: a block written in ours' order instead would leave the file
+  // permanently shuffled relative to cjpais/Handy, and every later upstream
+  // edit to those imports would collide with the shuffle. Resolving a conflict
+  // by planting the next one is not resolving it.
+  return [
+    ...h.theirs.filter((l) => inOurs.has(l.trim()) || !inBase.has(l.trim())),
+    ...h.ours.filter((l) => !inBase.has(l.trim()) && !inTheirs.has(l.trim())),
+  ];
+}
+
+/**
  * Resolve a whole file from its diff3 rendering, or return null if any hunk in
  * it is a real question. Per-file all-or-nothing for the same reason the run
  * is: a file half-resolved by machine and half by hand is unreviewable.
  */
-function resolveByShape(merged: string, file: string): string | null {
+export function resolveByShape(merged: string, file: string): string | null {
   const allowIdentity = IDENTITY_FILES.has(file);
   const pieces = parseDiff3(merged);
   if (!pieces) return null;
@@ -346,6 +501,8 @@ function resolveByShape(merged: string, file: string): string | null {
       out.push(...p.hunk.ours);
     } else if (isListAppendHunk(p.hunk)) {
       out.push(...p.hunk.ours, ...p.hunk.theirs);
+    } else if (isUseBlockHunk(p.hunk)) {
+      out.push(...mergeUseBlock(p.hunk));
     } else {
       return null;
     }
@@ -588,4 +745,10 @@ function main(): number {
   return 0;
 }
 
-process.exit(main());
+// Guarded so the pure classifiers above can be imported by
+// resolve-sync-conflicts.test.ts without the script trying to resolve a merge
+// that is not in progress. `bun scripts/resolve-sync-conflicts.ts`, which is
+// how sync-upstream.yml invokes it, still runs exactly as before.
+if (import.meta.main) {
+  process.exit(main());
+}
