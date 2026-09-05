@@ -578,6 +578,29 @@ jobs:
             | awk '{ sub("refs/heads/", "", $2); print $2 }' | sort | tail -1)
 
           if [ -n "$EXISTING_BRANCH" ]; then
+            # How stale that branch is, in upstream commits. It is a snapshot of
+            # one moment - a merge commit whose second parent is upstream's tip
+            # as it stood the day it was pushed - and it is never refreshed, so
+            # upstream keeps moving underneath it. Resolving it therefore does
+            # NOT catch the fork up: on 2026-09-05 the branch waiting since
+            # 08-31 was missing the two newest upstream commits, and merging it
+            # would have left main behind with tomorrow's run opening a second
+            # branch for the remainder. That is worth knowing *before* sitting
+            # down to resolve it, not after.
+            #
+            # Deliberately reported rather than acted on. Force-updating the
+            # branch to a fresh snapshot would be the tidier outcome and is not
+            # worth it: the branch is where a human's half-finished conflict
+            # resolution lives, and no amount of "has anyone touched it yet"
+            # checking makes overwriting that a good trade against saving a day.
+            STALE_NOTE=""
+            if git fetch --no-tags --quiet origin "$EXISTING_BRANCH" 2> /dev/null; then
+              MISSING=$(git rev-list --count --first-parent FETCH_HEAD..upstream/main 2> /dev/null || echo 0)
+              if [ "${MISSING:-0}" -gt 0 ]; then
+                STALE_NOTE="$MISSING"
+              fi
+            fi
+
             {
               echo "### Upstream sync still blocked"
               echo
@@ -586,10 +609,22 @@ jobs:
               echo "\`$EXISTING_BRANCH\` is already waiting to be resolved, so this run did"
               echo "not open a second branch or a second PR. \`main\` is untouched."
               echo
+              if [ -n "$STALE_NOTE" ]; then
+                echo "**That branch is a snapshot and has gone stale.** Upstream has published"
+                echo "$STALE_NOTE commit(s) since it was created, which it does not contain, so"
+                echo "resolving and merging it will *not* bring this fork up to date - the next"
+                echo "run opens a further branch for the rest. Resolve it anyway: partial"
+                echo "progress is what stops the backlog growing."
+                echo
+              fi
               echo "Resolve that branch, merge it, then delete it - the next sync picks up"
               echo "everything that has landed upstream since."
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::Unresolved sync branch $EXISTING_BRANCH already exists; not creating another."
+            if [ -n "$STALE_NOTE" ]; then
+              echo "::warning::Unresolved sync branch $EXISTING_BRANCH already exists (and is now $STALE_NOTE upstream commit(s) behind); not creating another."
+            else
+              echo "::warning::Unresolved sync branch $EXISTING_BRANCH already exists; not creating another."
+            fi
             exit 0
           fi
 
