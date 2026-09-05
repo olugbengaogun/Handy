@@ -165,6 +165,16 @@ for (const stray of [
 // region. It must be refused, not "merged".
 assert.strictEqual(isUseBlockHunk(hunk([], [], [])), false);
 
+// Visibility-restricted re-exports parse the same way as a plain `use`.
+{
+  const h = hunk(["pub(crate) use crate::a::A;"], [], ["use crate::b::B;"]);
+  assert.ok(isUseBlockHunk(h));
+  assert.deepStrictEqual(mergeUseBlock(h), [
+    "use crate::b::B;",
+    "pub(crate) use crate::a::A;",
+  ]);
+}
+
 // `pub use` re-exports are still plain use lines and merge the same way.
 {
   const h = hunk(["pub use crate::a::A;"], [], ["pub use crate::b::B;"]);
