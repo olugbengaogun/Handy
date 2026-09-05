@@ -2,6 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale } from "@tauri-apps/plugin-os";
 import { LANGUAGE_METADATA } from "./languages";
+import { mergeOverlay, type TranslationTree } from "./overlay";
 import { commands } from "@/bindings";
 import {
   getLanguageDirection,
@@ -10,17 +11,46 @@ import {
 } from "@/lib/utils/rtl";
 
 // Auto-discover translation files using Vite's glob import
-const localeModules = import.meta.glob<{ default: Record<string, unknown> }>(
+const localeModules = import.meta.glob<{ default: TranslationTree }>(
   "./locales/*/translation.json",
   { eager: true },
 );
 
-// Build resources from discovered locale files
-const resources: Record<string, { translation: Record<string, unknown> }> = {};
-for (const [path, module] of Object.entries(localeModules)) {
-  const langCode = path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
+// ...and the Handy Plus overlay beside each of them. `translation.json` is
+// upstream's file, kept byte-identical so it never conflicts during a sync;
+// every string this fork changes or adds lives in `plus.json`. See
+// ./overlay.ts for why, and scripts/check-translations.ts for the audit that
+// catches an override drifting away from the upstream string it rebrands.
+//
+// A locale with no `plus.json` (every language but English today) simply has
+// no entry here and is used exactly as upstream shipped it.
+const overlayModules = import.meta.glob<{ default: TranslationTree }>(
+  "./locales/*/plus.json",
+  { eager: true },
+);
+
+// The directory name, taken structurally rather than by pattern-matching the
+// whole path: the glob above already guarantees the shape, and the two globs
+// must agree on how a locale is named or an overlay would silently attach to
+// nothing.
+const localeOf = (path: string) => path.split("/").slice(-2, -1)[0];
+
+const overlays: Record<string, TranslationTree> = {};
+for (const [path, module] of Object.entries(overlayModules)) {
+  const langCode = localeOf(path);
   if (langCode) {
-    resources[langCode] = { translation: module.default };
+    overlays[langCode] = module.default;
+  }
+}
+
+// Build resources from discovered locale files
+const resources: Record<string, { translation: TranslationTree }> = {};
+for (const [path, module] of Object.entries(localeModules)) {
+  const langCode = localeOf(path);
+  if (langCode) {
+    resources[langCode] = {
+      translation: mergeOverlay(module.default, overlays[langCode]),
+    };
   }
 }
 

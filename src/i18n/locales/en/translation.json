@@ -15,10 +15,8 @@
     "advanced": "Advanced",
     "postProcessing": "Post Process",
     "history": "History",
-    "insights": "Insights",
     "debug": "Debug",
-    "about": "About",
-    "vocabulary": "Vocabulary"
+    "about": "About"
   },
   "onboarding": {
     "subtitle": "To get started, choose a transcription model",
@@ -103,7 +101,7 @@
     },
     "permissions": {
       "title": "Permissions Required",
-      "description": "Handy Plus needs a couple of permissions to work properly.",
+      "description": "Handy needs a couple of permissions to work properly.",
       "microphone": {
         "title": "Microphone Access",
         "description": "Required to hear your voice for transcription."
@@ -163,7 +161,7 @@
     "general": {
       "title": "General",
       "shortcut": {
-        "title": "Handy Plus Shortcuts",
+        "title": "Handy Shortcuts",
         "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
         "loading": "Loading shortcuts...",
         "none": "No shortcuts configured",
@@ -217,7 +215,7 @@
       },
       "rescan": {
         "label": "Rescan",
-        "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Handy Plus"
+        "tooltip": "Rescan for models added to the models folder or Hugging Face cache outside Handy"
       },
       "noModelsMatch": "No models match this filter."
     },
@@ -248,14 +246,6 @@
       "volume": {
         "title": "Volume",
         "description": "Adjust the volume of audio feedback sounds"
-      },
-      "pauseMediaWhileRecording": {
-        "label": "Pause Music While Recording",
-        "description": "Pause Spotify when recording starts and resume it from the same spot when you stop",
-        "denied": "Handy Plus is not allowed to control Spotify. Grant it in System Settings > Privacy & Security > Automation.",
-        "notRunning": "Spotify is not running. Start it, then switch this on again to grant permission.",
-        "unsupported": "Pausing music is only available on macOS.",
-        "failed": "Could not reach Spotify. Music will keep playing while you record."
       }
     },
     "advanced": {
@@ -293,11 +283,11 @@
       },
       "autostart": {
         "label": "Launch on Startup",
-        "description": "Automatically start Handy Plus when you log in to your computer."
+        "description": "Automatically start Handy when you log in to your computer."
       },
       "showTrayIcon": {
         "label": "Show Tray Icon",
-        "description": "Display the Handy Plus icon in the system tray."
+        "description": "Display the Handy icon in the system tray."
       },
       "overlay": {
         "style": {
@@ -398,27 +388,6 @@
       "fillerWordRemoval": {
         "title": "Remove Filler Words",
         "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
-      },
-      "keepAudioRecordings": {
-        "label": "Keep Audio Recordings",
-        "description": "Save the audio for each dictation alongside its text. Turn off to keep searchable transcript history without storing audio files, saving disk space."
-      },
-      "correctionPairs": {
-        "title": "Personal Dictionary",
-        "description": "Teach spelling corrections for names and terms that keep getting mis-transcribed. Add pairs directly here, or edit a transcript in History and confirm the suggested correction.",
-        "wrongPlaceholder": "Heard as",
-        "correctPlaceholder": "Correct spelling",
-        "add": "Add",
-        "remove": "Remove {{word}}",
-        "duplicate": "\"{{word}}\" already has a correction"
-      },
-      "audioNormalization": {
-        "label": "Normalize quiet audio",
-        "description": "Lifts quiet recordings toward a usable level before transcription. Only boosts — audio that is already loud enough is left untouched."
-      },
-      "discourseFillers": {
-        "label": "Remove \"you know\" and \"I mean\"",
-        "description": "Drops these two phrases when you used them as filler — that is, when a pause follows them. \"Do you know the answer\" and \"I mean it\" are left alone. English only."
       }
     },
     "postProcessing": {
@@ -477,44 +446,9 @@
     },
     "history": {
       "title": "History",
-      "select": "Select",
-      "cancelSelect": "Cancel",
-      "selectAllVisible": "Select all shown",
-      "clearSelection": "Clear",
-      "selectedCount": "{{n}} selected",
-      "exportButton": "Export…",
-      "export": {
-        "title": "Export transcripts",
-        "format": "Format",
-        "formats": {
-          "markdown": "Markdown — grouped by day, for reading",
-          "csv": "CSV — one row per transcript, for spreadsheets",
-          "plain_text": "Plain text — transcripts only",
-          "training_jsonl": "Training JSONL — correction pairs"
-        },
-        "range": "Date range",
-        "ranges": {
-          "last7": "Last 7 days",
-          "last30": "Last 30 days",
-          "last90": "Last 90 days",
-          "all": "Everything"
-        },
-        "selectionOnly": "Only the {{n}} I ticked",
-        "verifiedOnly": "Only transcripts I corrected by hand",
-        "prunedByCount": "Handy Plus is keeping only your {{n}} most recent transcripts — older ones have already been deleted and cannot be exported. Star transcripts to keep them, or raise the limit in History settings.",
-        "prunedByAge": "Handy Plus deletes transcripts older than your retention setting, so anything past it is already gone and cannot be exported.",
-        "trainingNote": "Contains phrase corrections you have made, plus whole-transcript pairs for anything you correct from now on. Transcripts corrected before this feature existed cannot be paired — the original text was not kept.",
-        "confirm": "Choose file and export",
-        "working": "Exporting…",
-        "cancel": "Cancel",
-        "close": "Close",
-        "done": "Exported {{transcripts}} transcripts ({{pairs}} training pairs, {{corrections}} phrase corrections)."
-      },
       "openFolder": "Open Recordings Folder",
       "loading": "Loading history...",
       "empty": "No transcriptions yet. Start recording to build your history!",
-      "searchPlaceholder": "Search transcripts...",
-      "noSearchResults": "No transcripts match \"{{query}}\"",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
       "unsave": "Remove from saved",
@@ -523,45 +457,7 @@
       "retranscribe": "Re-transcribe",
       "retranscribeError": "Failed to re-transcribe. Please try again.",
       "transcribing": "Transcribing...",
-      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
-      "audioNotSaved": "Audio not saved for this entry",
-      "edit": "Edit transcript",
-      "editError": "Failed to save your edit. Please try again.",
-      "teachPrompt": "Teach Handy Plus that \"{{wrong}}\" should be \"{{correct}}\"?",
-      "teachConfirm": "Teach it"
-    },
-    "insights": {
-      "title": "Usage Insights",
-      "loading": "Loading...",
-      "empty": "No dictation yet for this period.",
-      "totalWords": "Total Words",
-      "averageWpm": "words per minute",
-      "totalRecordings": "Recordings",
-      "timeSpeaking": "Time Speaking",
-      "wordsPerDay": "Words per day",
-      "wordsCount_one": "{{count}} word",
-      "wordsCount_other": "{{count}} words",
-      "peak": "peak {{words}}",
-      "streak": "{{current}}-day streak · longest {{longest}}",
-      "noDictation": "No dictation",
-      "less": "Less",
-      "more": "More",
-      "footnote": "Counted on your Mac from your own history, and kept even after old transcripts are cleared.",
-      "today": "Today",
-      "kind": {
-        "day": "Day",
-        "week": "Week",
-        "month": "Month",
-        "year": "Year",
-        "all": "All time"
-      },
-      "previousPeriod": "Previous period",
-      "nextPeriod": "Next period",
-      "wordsPerWeek": "Words per week",
-      "weekOf": "week of {{date}}",
-      "emptyPeriod": "Nothing dictated in this period.",
-      "longestOnly": "Longest run {{longest}} days",
-      "since": "Since {{date}}."
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon."
     },
     "debug": {
       "title": "Debug",
@@ -586,7 +482,7 @@
       },
       "updateChecks": {
         "label": "Check for Updates",
-        "description": "Automatically check for new versions of Handy Plus"
+        "description": "Automatically check for new versions of Handy"
       },
       "whatsNewPreview": {
         "title": "Preview What's New",
@@ -606,8 +502,7 @@
       "historyLimit": {
         "title": "History Limit",
         "description": "Maximum number of history entries to keep",
-        "entries": "entries",
-        "unlimited": "Unlimited"
+        "entries": "entries"
       },
       "recordingRetention": {
         "title": "Auto-Delete Recordings",
@@ -667,7 +562,7 @@
       },
       "keyboardDiagnostic": {
         "title": "Keyboard Diagnostic",
-        "description": "Checks whether keyboard events reach Handy Plus. Only event counts are recorded — never which keys you press.",
+        "description": "Checks whether keyboard events reach Handy. Only event counts are recorded — never which keys you press.",
         "run": "Run 10s diagnostic",
         "running": "Listening… press your shortcut a few times (e.g. Option+Space)",
         "secureInputLabel": "Secure Input",
@@ -681,87 +576,42 @@
         "mouse": "Mouse",
         "verdictBlocked": "Secure Input is blocking key events — keyed shortcuts cannot work until it is resolved.",
         "verdictSuspicious": "Modifier events arrived but no key events — something is suppressing keys even though Secure Input reports disabled. Please report this on GitHub.",
-        "verdictOk": "Key events are reaching Handy Plus normally.",
+        "verdictOk": "Key events are reaching Handy normally.",
         "verdictNoEvents": "No events captured — did you press any keys during the test?",
         "failed": "Diagnostic failed: {{error}}"
-      },
-      "doubleMetaphoneMatching": {
-        "label": "Double Metaphone matching",
-        "description": "Use Double Metaphone instead of Soundex to match custom words by sound. More accurate on names, but it changes which words clear the correction threshold — measure before leaving it on."
       }
     },
     "about": {
       "title": "About",
       "version": {
         "title": "Version",
-        "description": "Current version of Handy Plus"
+        "description": "Current version of Handy"
       },
       "whatsNewUpdates": {
         "label": "Show What's New",
-        "description": "Show release notes after Handy Plus updates"
-      },
-      "whatsNewHistory": {
-        "title": "What's New",
-        "description": "See what changed in each released version, newest first",
-        "button": "View"
+        "description": "Show release notes after Handy updates"
       },
       "appDataDirectory": {
         "title": "App Data Directory",
-        "description": "Location where Handy Plus stores its data"
-      },
-      "website": {
-        "title": "Website",
-        "description": "Visit the Handy Plus website",
-        "button": "Visit Website"
+        "description": "Location where Handy stores its data"
       },
       "sourceCode": {
         "title": "Source Code",
         "description": "View source code and contribute",
         "button": "View on GitHub"
       },
+      "supportDevelopment": {
+        "title": "Support Development",
+        "description": "Help us continue building Handy",
+        "button": "Donate"
+      },
       "acknowledgments": {
         "title": "Acknowledgments",
         "ggml": {
           "title": "ggml",
           "description": "High-performance tensor library for on-device machine learning inference",
-          "details": "Handy Plus's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
+          "details": "Handy's local speech-to-text is built on transcribe.cpp and ggml. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
-      }
-    },
-    "vocabulary": {
-      "loading": "Loading...",
-      "timesFixed_one": "fixed 1 time",
-      "timesFixed_other": "fixed {{count}} times",
-      "suggestions": {
-        "title": "Suggested corrections",
-        "description": "Corrections you have made more than once. Accepting one applies it automatically from now on.",
-        "empty": "Nothing yet. When you fix a transcript in History and the same fix comes up again, it will appear here ready to accept.",
-        "accept": "Accept",
-        "dismiss": "Dismiss",
-        "acceptLabel": "Always correct {{before}} to {{after}}",
-        "dismissLabel": "Never suggest correcting {{before}} to {{after}}"
-      },
-      "learning": {
-        "title": "Still learning",
-        "description": "Fixes seen once. Make the same one again and it moves up to be accepted — waiting for a second sighting is what stops a typo becoming a permanent rule.",
-        "seenOnce": "seen once"
-      },
-      "candidates": {
-        "title": "Words you use often",
-        "description": "Names and terms found in your past transcripts. Adding one tells the model to listen for it.",
-        "empty": "Nothing to suggest yet — this fills in as you dictate.",
-        "add": "Add",
-        "addLabel": "Add {{term}} to the dictionary",
-        "timesSeen_one": "seen 1 time",
-        "timesSeen_other": "seen {{count}} times"
-      },
-      "dictionary": {
-        "title": "Your dictionary",
-        "description": "Corrections applied to every transcription."
-      },
-      "words": {
-        "title": "Custom words",
-        "description": "Words and names to listen for."
       }
     }
   },
@@ -781,10 +631,7 @@
     "portableUpdateBrowseButton": "Open GitHub Releases"
   },
   "whatsNew": {
-    "title": "New in Handy Plus v{{version}}",
-    "historyTitle": "What's New",
-    "historyVersionHeading": "Version {{version}}",
-    "historyEmpty": "No release notes are bundled with this build yet."
+    "title": "New in Handy v{{version}}"
   },
   "common": {
     "loading": "Loading...",
@@ -793,12 +640,10 @@
     "open": "Open",
     "copy": "Copy",
     "clear": "Clear",
-    "cancel": "Cancel",
-    "save": "Save",
     "noOptionsFound": "No options found"
   },
   "accessibility": {
-    "permissionsDescription": "Handy Plus needs accessibility permissions to type transcribed text.",
+    "permissionsDescription": "Handy needs accessibility permissions to type transcribed text.",
     "openSettings": "Open System Settings"
   },
   "errors": {
@@ -821,11 +666,11 @@
   },
   "appLanguage": {
     "title": "Application Language",
-    "description": "Change the language of the Handy Plus interface"
+    "description": "Change the language of the Handy interface"
   },
   "theme": {
     "title": "Application Theme",
-    "description": "Choose whether Handy Plus follows your system theme or stays light or dark",
+    "description": "Choose whether Handy follows your system theme or stays light or dark",
     "options": {
       "system": "System",
       "light": "Light",
