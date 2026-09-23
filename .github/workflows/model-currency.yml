@@ -30,7 +30,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history + tags: the shipped-vs-merged check diffs the catalog
           # against the most recent release tag, and a shallow clone has neither.
@@ -39,7 +39,12 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/cjpais/Handy.git || true
-          git fetch upstream --quiet || echo "upstream fetch failed; that check will report it"
+          # --no-tags: only this fork's release tags may be reachable from HEAD.
+          # Fetching upstream's tag history puts ~90 foreign tags in range of the
+          # `git describe` that the shipped-vs-merged check relies on, and the
+          # nearest tag wins — which need not be ours once main advances past a
+          # release. Nothing in this check reads upstream's tags.
+          git fetch upstream --no-tags --quiet || echo "upstream fetch failed; that check will report it"
 
       - uses: oven-sh/setup-bun@v2
         with:

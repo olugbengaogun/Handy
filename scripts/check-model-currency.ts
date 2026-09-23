@@ -26,7 +26,10 @@
  * an English sentence, so rewording a line silently inverted it.
  *
  *     0  no actionable finding (informational ones may still be reported)
- *     1  the check itself could not complete
+ *     1  the check itself could not complete — it threw, or one of its
+ *        sub-checks could not reach HuggingFace or crates.io. This outranks 2:
+ *        a run that could not look has not found anything, and reporting it as
+ *        drift would repeat the very fault these codes exist to remove.
  *     2  at least one `warn` finding — something this fork should act on
  *
  * Severity is the other half of that contract. Every finding carries one, and
@@ -102,6 +105,23 @@ export function hasActionableFinding(findings: Finding[]): boolean {
   return findings.some((f) => f.severity === "warn");
 }
 
+/**
+ * The process exit code for a finished run.
+ *
+ * `incomplete` outranks `actionable` deliberately. A sub-check that threw —
+ * HuggingFace down, crates.io rate-limiting — leaves us without a full
+ * picture, and saying "drift detected" then would repeat the exact fault this
+ * script's exit codes were introduced to remove: announcing a failure under
+ * the wrong name. We did not find drift; we failed to look.
+ */
+export function exitCodeFor(state: {
+  incomplete: boolean;
+  actionable: boolean;
+}): number {
+  if (state.incomplete) return EXIT_ERROR;
+  return state.actionable ? EXIT_DRIFT : EXIT_CLEAN;
+}
+
 const slugOf = (repoId: string): string =>
   repoId
     .split("/")
@@ -161,7 +181,14 @@ async function fetchJson(url: string): Promise<unknown> {
 
 // ── check 1: is our catalog behind upstream's? ────────────────────────────────
 function checkCatalogDrift(): Finding[] {
-  git("fetch upstream --quiet");
+  // `--no-tags`: this fork's release tags are the only ones that should be
+  // reachable here. Upstream's whole tag history otherwise lands in the local
+  // repo, and `git describe` in checkShippingDrift below picks the *nearest*
+  // reachable tag — so on any run where main has advanced past this fork's
+  // last release without a new tag (a sync that merged but skipped the
+  // release), an upstream tag can win and the catalog gets diffed against a
+  // release that was never ours. Nothing here needs upstream's tags.
+  git("fetch upstream --no-tags --quiet");
   const diff = git("diff --stat HEAD upstream/main -- src-tauri/src/catalog/");
   if (diff === null) {
     return [
@@ -425,6 +452,7 @@ async function main(): Promise<void> {
 
   // Network checks are settled individually so one outage cannot mask the
   // others, and a failure is reported rather than swallowed into "all clear".
+  let incomplete = false;
   for (const [name, run] of [
     ["org-drift", () => checkOrgDrift(catalogIds)],
     ["crate-pin", () => checkCratePin(cargoToml)],
@@ -432,6 +460,9 @@ async function main(): Promise<void> {
     try {
       findings.push(...(await run()));
     } catch (error) {
+      // Still `warn`, so it reads as needing attention in the report — but it
+      // is a failure to look, not a thing seen, and the exit code says so.
+      incomplete = true;
       findings.push({
         check: name,
         severity: "warn",
@@ -442,17 +473,19 @@ async function main(): Promise<void> {
 
   const actionable = hasActionableFinding(findings);
 
-  // `actionable` is additive: every field the previous shape carried is still
-  // here and unchanged, so anything already reading this JSON keeps working.
+  // `actionable` and `incomplete` are additive: every field the previous shape
+  // carried is still here and unchanged, so anything already reading this JSON
+  // keeps working.
   const summary = {
     catalogModelCount: catalogIds.length,
     pinnedTranscribeCpp: pinnedCrateVersion(cargoToml, CRATE),
     actionable,
+    incomplete,
     findings,
   };
 
   // Set rather than thrown, so stdout is flushed before the process leaves.
-  process.exitCode = actionable ? EXIT_DRIFT : EXIT_CLEAN;
+  process.exitCode = exitCodeFor({ incomplete, actionable });
 
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(summary, null, 2));
@@ -472,9 +505,12 @@ async function main(): Promise<void> {
     console.log(`[${f.severity}] ${f.check}: ${f.message}\n`);
   }
   console.log(
-    actionable
-      ? "Actionable drift detected — see the findings above."
-      : "No actionable drift — every finding above is informational.",
+    incomplete
+      ? "The check could not complete — see the findings above. No conclusion " +
+          "about drift should be drawn from this run."
+      : actionable
+        ? "Actionable drift detected — see the findings above."
+        : "No actionable drift — every finding above is informational.",
   );
 }
 
