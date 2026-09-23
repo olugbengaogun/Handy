@@ -48,19 +48,33 @@ jobs:
       - name: Run currency check
         id: check
         run: |
-          bun run scripts/check-model-currency.ts | tee report.txt
           # The job status is decided by the reporting step below, so that the
           # report always reaches the run summary first.
-          if grep -q "No drift detected" report.txt; then
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-          fi
+          #
+          # The status now comes from the script's exit code rather than from
+          # grepping its prose through `tee`. That pipeline returned `tee`'s
+          # status, and GitHub's shell is `bash -e` with no `pipefail`, so a
+          # crash in the check exited 0 and was then reported as drift — the
+          # one failure whose real name matters most, given the wrong one. The
+          # old gate also keyed on an English sentence, so rewording a line
+          # would have silently inverted it.
+          #
+          #   0 = clean, 2 = actionable drift, anything else = the check broke.
+          set +e
+          bun run scripts/check-model-currency.ts > report.txt 2>&1
+          code=$?
+          set -e
+          # The output is recorded before anything else can fail. If `cat` were
+          # first and report.txt were missing, `bash -e` would abort this step
+          # with no `code` set, the reporting step's guard would skip it, and
+          # the run would go red carrying no summary at all — a silent alarm.
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          cat report.txt 2>/dev/null || echo "(the check produced no output)"
 
       - name: Report findings
-        if: always() && steps.check.outputs.drift != ''
+        if: always() && steps.check.outputs.code != ''
         env:
-          DRIFT: ${{ steps.check.outputs.drift }}
+          CODE: ${{ steps.check.outputs.code }}
         run: |
           # This step used to open a GitHub issue. Issues are disabled on this
           # fork (contributors are pointed upstream), so github-script threw
@@ -72,19 +86,24 @@ jobs:
           # The report now goes to the run summary, and drift fails the job.
           # The original design deliberately did not fail, on the grounds that a
           # weekly red X trains people to ignore it. That reasoning holds for
-          # alarms nobody can act on; it does not hold here. Every finding this
-          # check emits is actionable — bump the crate, add the model, unstick
-          # the sync — so the X stays red exactly until someone acts, which is
-          # what a red X is for. With Issues gone it is also the only channel
-          # left that sends mail.
+          # alarms nobody can act on; it does not hold here. With Issues gone
+          # the job status is also the only channel left that sends mail.
+          #
+          # "Every finding this check emits is actionable" was the premise, and
+          # it was not true: the script has always graded findings `info` or
+          # `warn`, and this gate ignored the grade. An absent release tag and
+          # an unreachable upstream — both written to be informational — failed
+          # the job exactly like real drift. Only `warn` does now, which is what
+          # the grade was for. A finding nobody here can act on still prints; it
+          # just does not cost a red X.
           {
             echo "## Model currency check"
             echo
-            if [ "$DRIFT" = "true" ]; then
-              echo "Drift detected in the model delivery chain."
-            else
-              echo "No drift detected — the model stack is current."
-            fi
+            case "$CODE" in
+              0) echo "No actionable drift — the model stack is current." ;;
+              2) echo "Drift detected in the model delivery chain." ;;
+              *) echo "The check did not complete (exit $CODE); the output below is the diagnosis." ;;
+            esac
             echo
             echo '```'
             # Tolerated rather than assumed: if the check crashed before writing
@@ -95,7 +114,17 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$DRIFT" = "true" ]; then
-            echo "::error::Model currency drift detected. See the run summary for the full report."
-            exit 1
-          fi
+          # A broken check and a stalled model stack are both worth mail, but
+          # they are not the same problem and must not arrive wearing the same
+          # name — the whole point of keeping the exit code intact.
+          case "$CODE" in
+            0) ;;
+            2)
+              echo "::error::Model currency drift detected. See the run summary for the full report."
+              exit 1
+              ;;
+            *)
+              echo "::error::The model currency check itself failed (exit $CODE). See the run summary."
+              exit 1
+              ;;
+          esac
