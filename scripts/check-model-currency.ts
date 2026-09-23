@@ -18,9 +18,22 @@
  * released is invisible to users. That makes check 4 the one that matters most,
  * and the one nobody remembers to do by hand.
  *
- * Exits 0 always in report mode; the workflow decides what to do with the JSON
- * summary on stdout. Exit 1 only on an internal error, so a transient network
- * failure never silently reports "all clear".
+ * Exit codes are the contract, because the workflow used to decide the job's
+ * fate by grepping this script's prose out of a `tee` pipeline. That had two
+ * faults. `tee` returns its own status and GitHub's shell sets no `pipefail`,
+ * so a crash here exited 0 and was then reported as "drift" — a misdiagnosis
+ * of the single failure that most needs its real name. And the gate keyed on
+ * an English sentence, so rewording a line silently inverted it.
+ *
+ *     0  no actionable finding (informational ones may still be reported)
+ *     1  the check itself could not complete
+ *     2  at least one `warn` finding — something this fork should act on
+ *
+ * Severity is the other half of that contract. Every finding carries one, and
+ * only `warn` is actionable; `info` exists to say "this was looked at and is
+ * fine" without turning the run red. Nothing consumed that distinction before,
+ * so "No release tag found; skipping" and "upstream fetch failed" — both
+ * deliberately informational — failed the job exactly like real drift did.
  *
  * Usage:  bun run scripts/check-model-currency.ts [--json]
  */
@@ -49,10 +62,44 @@ const KNOWN_EXCLUSIONS = [
   "diar_streaming_sortformer_4spk-v2.1",
 ];
 
+/**
+ * How long a model may sit in the org before its absence from the catalog
+ * counts as a stall rather than ordinary lag.
+ *
+ * Upstream regenerates catalog.json in batches, usually alongside a
+ * transcribe.cpp bump; the gaps between regenerations run to three weeks
+ * (2026-07-28 -> 2026-08-19 is one). Firing the moment a repo appears
+ * therefore reports upstream's normal cadence as a fault — and this fork
+ * cannot act on it anyway, because regenerating the catalog here means
+ * diverging on the one file the daily sync touches most. That is the same
+ * trade the crate-pin check below already refused, for the same reason.
+ *
+ * Thirty days sits clear of the observed cadence, so a `warn` here means
+ * upstream has genuinely stopped — the stall this check exists to catch.
+ * Inside the window the finding is still printed, just as `info`, so the
+ * drift is visible from the first week without costing a red X.
+ */
+const ORG_DRIFT_GRACE_DAYS = 30;
+
 export interface Finding {
   check: string;
   severity: "info" | "warn";
   message: string;
+}
+
+const EXIT_CLEAN = 0;
+const EXIT_ERROR = 1;
+const EXIT_DRIFT = 2;
+
+/**
+ * Whether anything here is worth a human's Monday morning.
+ *
+ * `info` findings are the check reporting its own limits — no release tag yet,
+ * upstream unreachable, a model still inside the grace period. They belong in
+ * the report; they do not belong in the job status.
+ */
+export function hasActionableFinding(findings: Finding[]): boolean {
+  return findings.some((f) => f.severity === "warn");
 }
 
 const slugOf = (repoId: string): string =>
@@ -139,30 +186,114 @@ function checkCatalogDrift(): Finding[] {
 }
 
 // ── check 2: models published by the org but absent from the catalog ──────────
+
+/** A repo in the org with no catalog entry. `ageDays` is null if unknowable. */
+export interface MissingModel {
+  slug: string;
+  ageDays: number | null;
+}
+
+/**
+ * Split the missing repos by age against the grace period. Pure, so the
+ * boundary is testable without reaching for the network.
+ *
+ * A repo whose age could not be read never escalates on its own. The
+ * alternative — treating "unknown" as "old" — turns one flaky HuggingFace
+ * response into a red X on a watchdog, which is how a watchdog gets muted.
+ * Erring the other way costs at most a week: the next Monday run re-reads it.
+ */
+export function orgDriftFindings(
+  missing: MissingModel[],
+  graceDays: number,
+): Finding[] {
+  if (missing.length === 0) return [];
+
+  const listed = missing
+    .map(
+      (m) =>
+        `  ${m.slug}` +
+        (m.ageDays === null
+          ? " (publication date unavailable)"
+          : ` (published ${m.ageDays}d ago)`),
+    )
+    .join("\n");
+
+  const stalled = missing.filter(
+    (m) => m.ageDays !== null && m.ageDays >= graceDays,
+  );
+
+  if (stalled.length === 0) {
+    return [
+      {
+        check: "org-drift",
+        severity: "info",
+        message:
+          `${missing.length} model(s) published by ${HF_ORG} are not in our ` +
+          `catalog, none of them older than ${graceDays} days. Upstream ` +
+          "regenerates the catalog in batches, so this is ordinary lag until " +
+          "one of them ages out:\n" +
+          listed,
+      },
+    ];
+  }
+
+  return [
+    {
+      check: "org-drift",
+      severity: "warn",
+      message:
+        `${stalled.length} model(s) published by ${HF_ORG} have been missing ` +
+        `from our catalog for over ${graceDays} days. Upstream has most likely ` +
+        "stopped regenerating it (or KNOWN_EXCLUSIONS needs updating):\n" +
+        listed,
+    },
+  ];
+}
+
+/** Days since a repo was created on the Hub, or null if that cannot be read. */
+async function repoAgeDays(
+  repoId: string,
+  now: number,
+): Promise<number | null> {
+  try {
+    const meta = (await fetchJson(
+      `https://huggingface.co/api/models/${repoId}`,
+    )) as { createdAt?: string };
+    const created = Date.parse(meta.createdAt ?? "");
+    if (Number.isNaN(created)) return null;
+    return Math.floor((now - created) / 86_400_000);
+  } catch {
+    return null;
+  }
+}
+
 async function checkOrgDrift(catalogIds: string[]): Promise<Finding[]> {
   const models = (await fetchJson(
     `https://huggingface.co/api/models?author=${HF_ORG}&limit=1000`,
   )) as { id?: string }[];
 
   const known = new Set(catalogIds.map(slugOf));
-  const missing = models
+  const missingIds = models
     .map((m) => m.id)
     .filter((id): id is string => typeof id === "string")
     .filter((id) => id.endsWith("-gguf"))
-    .map(slugOf)
-    .filter((slug) => !known.has(slug) && !KNOWN_EXCLUSIONS.includes(slug));
+    .filter(
+      (id) => !known.has(slugOf(id)) && !KNOWN_EXCLUSIONS.includes(slugOf(id)),
+    );
 
-  if (missing.length === 0) return [];
-  return [
-    {
-      check: "org-drift",
-      severity: "warn",
-      message:
-        `${missing.length} model(s) published by ${HF_ORG} are not in our catalog. ` +
-        "This is the earliest signal that upstream has stopped regenerating it " +
-        `(or that KNOWN_EXCLUSIONS needs updating):\n  ${missing.join("\n  ")}`,
-    },
-  ];
+  if (missingIds.length === 0) return [];
+
+  // Only the missing repos are looked up individually — normally none, and a
+  // handful at worst. The org listing does not carry creation dates.
+  const now = Date.now();
+  const missing = await Promise.all(
+    missingIds.map(async (id) => ({
+      slug: slugOf(id),
+      ageDays: await repoAgeDays(id, now),
+    })),
+  );
+
+  return orgDriftFindings(missing, ORG_DRIFT_GRACE_DAYS);
 }
 
 // ── check 3: is the transcribe-cpp pin behind the one upstream chose? ────────
@@ -309,11 +440,19 @@ async function main(): Promise<void> {
     }
   }
 
+  const actionable = hasActionableFinding(findings);
+
+  // `actionable` is additive: every field the previous shape carried is still
+  // here and unchanged, so anything already reading this JSON keeps working.
   const summary = {
     catalogModelCount: catalogIds.length,
     pinnedTranscribeCpp: pinnedCrateVersion(cargoToml, CRATE),
+    actionable,
     findings,
   };
+
+  // Set rather than thrown, so stdout is flushed before the process leaves.
+  process.exitCode = actionable ? EXIT_DRIFT : EXIT_CLEAN;
 
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(summary, null, 2));
@@ -323,6 +462,8 @@ async function main(): Promise<void> {
   console.log(`Catalog models: ${summary.catalogModelCount}`);
   console.log(`transcribe-cpp pin: ${summary.pinnedTranscribeCpp}`);
   if (findings.length === 0) {
+    // Wording held stable on purpose: it was a load-bearing string for the old
+    // grep-based gate, and costs nothing to keep for anything else reading it.
     console.log("\nNo drift detected — the model stack is current.");
     return;
   }
@@ -330,6 +471,11 @@ async function main(): Promise<void> {
   for (const f of findings) {
     console.log(`[${f.severity}] ${f.check}: ${f.message}\n`);
   }
+  console.log(
+    actionable
+      ? "Actionable drift detected — see the findings above."
+      : "No actionable drift — every finding above is informational.",
+  );
 }
 
 // Only run when invoked directly, so the pure helpers above stay importable
@@ -337,6 +483,6 @@ async function main(): Promise<void> {
 if (import.meta.main !== false) {
   main().catch((error) => {
     console.error(`model-currency check failed: ${(error as Error).message}`);
-    process.exit(1);
+    process.exit(EXIT_ERROR);
   });
 }
