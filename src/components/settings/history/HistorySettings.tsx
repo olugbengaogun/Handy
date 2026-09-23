@@ -26,9 +26,9 @@ import { useSettings } from "@/hooks/useSettings";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
-<<<<<<< HEAD
 import { Input } from "../../ui/Input";
 import { Textarea } from "../../ui/Textarea";
+import { copyToClipboard } from "./clipboard";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -67,9 +67,6 @@ function findSingleWordCorrection(
   }
   return { wrong, correct };
 }
-=======
-import { copyToClipboard } from "./clipboard";
->>>>>>> upstream/main
 
 const IconButton: React.FC<{
   onClick: () => void;
