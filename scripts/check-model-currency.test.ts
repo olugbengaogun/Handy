@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import {
   catalogRepoIds,
   compareVersions,
+  exitCodeFor,
   hasActionableFinding,
   orgDriftFindings,
   pinnedCrateVersion,
@@ -47,6 +48,22 @@ assert.equal(
   "one actionable finding among informational ones still fails",
 );
 assert.equal(hasActionableFinding([warn("org-drift")]), true);
+
+// ── the exit-code contract ───────────────────────────────────────────────────
+
+assert.equal(exitCodeFor({ incomplete: false, actionable: false }), 0);
+assert.equal(exitCodeFor({ incomplete: false, actionable: true }), 2);
+assert.equal(
+  exitCodeFor({ incomplete: true, actionable: false }),
+  1,
+  "a sub-check that could not reach the network is a failure to look",
+);
+assert.equal(
+  exitCodeFor({ incomplete: true, actionable: true }),
+  1,
+  "incomplete outranks actionable: with a hole in the data we must not " +
+    "announce drift, which would name the failure wrongly all over again",
+);
 
 // ── the org-drift grace period ───────────────────────────────────────────────
 
