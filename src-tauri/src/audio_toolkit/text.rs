@@ -315,7 +315,7 @@ pub enum OutputLanguageEvidence {
 }
 
 impl OutputLanguageEvidence {
-    fn language(&self) -> Option<&str> {
+    pub(crate) fn language(&self) -> Option<&str> {
         match self {
             Self::UserSelected(language)
             | Self::ModelConstrained(language)
