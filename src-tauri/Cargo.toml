@@ -1,8 +1,14 @@
 [package]
 name = "handy"
+<<<<<<< HEAD
 version = "1.5.15"
 description = "Handy Plus (a fork of Handy by cjpais)"
 authors = ["cjpais", "olugbengaogun"]
+=======
+version = "0.9.8"
+description = "Handy"
+authors = ["cjpais"]
+>>>>>>> upstream/main
 edition = "2021"
 license = "MIT"
 default-run = "handy"

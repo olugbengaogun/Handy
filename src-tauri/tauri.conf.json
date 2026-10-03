@@ -1,8 +1,14 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+<<<<<<< HEAD
   "productName": "Handy Plus",
   "version": "1.5.15",
   "identifier": "gbengaogun.handyplus",
+=======
+  "productName": "Handy",
+  "version": "0.9.8",
+  "identifier": "com.pais.handy",
+>>>>>>> upstream/main
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -71,7 +77,8 @@
     },
     "windows": {
       "nsis": {
-        "template": "nsis/installer.nsi"
+        "template": "nsis/installer.nsi",
+        "installerIcon": "icons/icon.ico"
       }
     }
   },
