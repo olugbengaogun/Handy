@@ -496,8 +496,9 @@ jobs:
           # job has already run `bun run build` and `cargo test` on the merged
           # tree, and release.yml rebuilds the shipping target immediately.
           # Only push-triggered runs are skipped; the workflow_dispatch below
-          # is unaffected, and the PR path deliberately omits the marker so a
-          # sync that needs human review still gets full CI.
+          # is unaffected. The PR path carries the marker only on a commit full
+          # of conflict markers, where CI could only fail; the resolution a human
+          # pushes on top gets full CI.
           git commit -m "chore: release v$NEW (automated upstream sync) [skip ci]"
           git push origin HEAD:main
 
@@ -553,7 +554,18 @@ jobs:
             done
 
             git add -A
-            git commit -m "chore: upstream sync (has conflicts, needs review)"
+            # [skip ci] because CI on this commit cannot pass and says nothing.
+            # The markers sit in package.json and Cargo.toml - the version
+            # fields collide on every upstream release - so `bun install` and
+            # `cargo` die on a parse error within seconds. On 2026-10-03 that was
+            # three failure mails (test, code quality, Playwright) for one
+            # conflict, all announcing the same unparseable file the PR already
+            # names. GitHub honours the marker on a pull request's HEAD commit,
+            # so the first resolution pushed to this branch gets full CI, which
+            # is the run that actually means something. The "tests failed after
+            # merging cleanly" path above never reaches this line, so its PR
+            # still gets CI on the merged tree straight away.
+            git commit -m "chore: upstream sync (has conflicts, needs review) [skip ci]"
           fi
 
           # A conflict that is already waiting must not be duplicated.
@@ -645,6 +657,10 @@ jobs:
           # than a prompt to resolve the conflict, which is the opposite of what
           # this is for.
           BODY="Automatic sync from cjpais/Handy couldn't merge and test cleanly ($REASON). Review and resolve here before merging into \`main\`."
+          if [ "${{ steps.merge.outputs.status }}" != "merged" ]; then
+            BODY="$(printf '%s\n\n%s' "$BODY" \
+              "CI is skipped on the conflicted commit (it cannot parse) and runs on the first resolution pushed here.")"
+          fi
           # printf rather than a multi-line string literal: every line inside a
           # `run: |` block must stay indented past the block's margin, and a
           # continuation starting at column 0 silently ends the scalar and
