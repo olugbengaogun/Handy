@@ -58,11 +58,7 @@ export const AdvancedSettings: React.FC = () => {
             this fork already carried filler_word_removal_enabled with no UI to
             reach it. */}
         <FillerWordRemoval descriptionMode="tooltip" grouped={true} />
-<<<<<<< HEAD
-=======
         <ChineseScriptSetting descriptionMode="tooltip" grouped={true} />
-        <CustomWords descriptionMode="tooltip" grouped />
->>>>>>> upstream/main
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
         <AudioNormalization descriptionMode="tooltip" grouped={true} />
         <DiscourseFillers descriptionMode="tooltip" grouped={true} />

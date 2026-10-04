@@ -519,7 +519,6 @@ pub struct AppSettings {
     pub filler_word_removal_enabled: bool,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
-<<<<<<< HEAD
     /// Drop spoken discourse markers ("you know", "I mean") when punctuation
     /// shows they were parenthetical. Separate from `custom_filler_words`
     /// because that list is single-word and clause-blind — see
@@ -538,12 +537,10 @@ pub struct AppSettings {
     /// Soundex. Enable it after measuring with `scripts/wer-bench.ts`.
     #[serde(default)]
     pub double_metaphone_matching: bool,
-=======
     /// Fresh installs default from the OS locale; existing stores are migrated
     /// in `apply_settings_migrations`.
     #[serde(default)]
     pub chinese_script: ChineseScript,
->>>>>>> upstream/main
     #[serde(default)]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
@@ -1051,13 +1048,10 @@ pub fn get_default_settings() -> AppSettings {
         external_script_path: None,
         filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,
-<<<<<<< HEAD
         remove_discourse_fillers: default_remove_discourse_fillers(),
         audio_normalization: default_audio_normalization(),
         double_metaphone_matching: false,
-=======
         chinese_script: default_chinese_script(),
->>>>>>> upstream/main
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),

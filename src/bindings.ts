@@ -1166,7 +1166,6 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-<<<<<<< HEAD
 reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; remove_discourse_fillers?: boolean; 
 /**
  * Lift quiet recordings toward a usable level before transcription.
@@ -1181,15 +1180,12 @@ audio_normalization?: boolean;
  * `word_correction_threshold`, and that threshold was tuned against
  * Soundex. Enable it after measuring with `scripts/wer-bench.ts`.
  */
-double_metaphone_matching?: boolean; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
-=======
-reliable_paste?: boolean; typing_tool?: TypingTool; external_script_path?: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; 
+double_metaphone_matching?: boolean; 
 /**
  * Fresh installs default from the OS locale; existing stores are migrated
  * in `apply_settings_migrations`.
  */
 chinese_script?: ChineseScript; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
->>>>>>> upstream/main
 /**
  * Stable transcribe.cpp device selector. This is derived from the backend's
  * `device_id` when available (or its name for backends such as Metal),

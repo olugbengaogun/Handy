@@ -1848,41 +1848,6 @@ fn post_process_transcription_text(
 ) -> String {
     let converts_script = settings.chinese_script != ChineseScript::AsTranscribed;
     fail_open_text_transform(raw, |raw| {
-<<<<<<< HEAD
-        // Deterministic, user-taught corrections run first and unconditionally.
-        // Unlike the fuzzy pass below they are an explicit instruction from the
-        // user, so they apply even when the model already received the custom
-        // words as a decode prompt — a prompt only *biases* the decoder, it does
-        // not guarantee the spelling the user asked for.
-        let pairs = apply_correction_pairs_tracked(
-            &raw,
-            settings
-                .correction_pairs
-                .iter()
-                .map(|p| (p.wrong.as_str(), p.correct.as_str())),
-        );
-
-        let effective_custom_words = settings.effective_custom_words();
-        let corrected = if !effective_custom_words.is_empty() && !custom_words_already_prompted {
-            // Fuzzy matching is deliberately kept away from spans the user
-            // spelled out by hand. A deterministic replacement creates word
-            // adjacencies that never existed in the raw transcription, and the
-            // 1–3-word n-gram matcher would otherwise score those new n-grams
-            // against its dictionary and could rewrite them.
-            apply_outside_protected(&pairs.text, &pairs.protected, |segment| {
-                apply_custom_words_with(
-                    segment,
-                    &effective_custom_words,
-                    settings.word_correction_threshold,
-                    settings.double_metaphone_matching,
-                )
-            })
-        } else {
-            pairs.text
-        };
-
-=======
->>>>>>> upstream/main
         // Last-resort language evidence: confidence-gated detection from the
         // transcribed text itself, constrained to the model's languages. Only
         // consulted when it can change the outcome (built-in gated fillers or
@@ -1917,14 +1882,36 @@ fn post_process_transcription_text(
             _ => raw,
         };
 
-        let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
-            apply_custom_words(
-                &raw,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
+        // Deterministic, user-taught corrections run first and unconditionally.
+        // Unlike the fuzzy pass below they are an explicit instruction from the
+        // user, so they apply even when the model already received the custom
+        // words as a decode prompt — a prompt only *biases* the decoder, it does
+        // not guarantee the spelling the user asked for.
+        let pairs = apply_correction_pairs_tracked(
+            &raw,
+            settings
+                .correction_pairs
+                .iter()
+                .map(|p| (p.wrong.as_str(), p.correct.as_str())),
+        );
+
+        let effective_custom_words = settings.effective_custom_words();
+        let corrected = if !effective_custom_words.is_empty() && !custom_words_already_prompted {
+            // Fuzzy matching is deliberately kept away from spans the user
+            // spelled out by hand. A deterministic replacement creates word
+            // adjacencies that never existed in the raw transcription, and the
+            // 1–3-word n-gram matcher would otherwise score those new n-grams
+            // against its dictionary and could rewrite them.
+            apply_outside_protected(&pairs.text, &pairs.protected, |segment| {
+                apply_custom_words_with(
+                    segment,
+                    &effective_custom_words,
+                    settings.word_correction_threshold,
+                    settings.double_metaphone_matching,
+                )
+            })
         } else {
-            raw
+            pairs.text
         };
 
         let without_fillers = remove_filler_words(
