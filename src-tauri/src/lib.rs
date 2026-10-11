@@ -9,6 +9,7 @@ mod chinese_script;
 pub mod cli;
 mod clipboard;
 mod commands;
+pub mod engine_supervisor;
 mod helpers;
 mod input;
 mod llm_client;
@@ -221,10 +222,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         Err(e) => log::warn!("Learning loop unavailable at startup: {e}"),
     }
 
-    // Initialize the transcribe-cpp native backend (logging + backend module
-    // registration) once, before any whisper model is loaded.
-    managers::transcription::init_transcribe_backend();
-
     // Apply accelerator preferences before any model loads
     managers::transcription::apply_accelerator_settings(app_handle);
 
@@ -324,10 +321,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                     log::warn!("No model is currently loaded.");
                     return;
                 }
-                match transcription_manager.unload_model() {
-                    Ok(()) => log::info!("Model unloaded via tray."),
-                    Err(e) => log::error!("Failed to unload model via tray: {}", e),
-                }
+                transcription_manager.request_unload();
+                log::info!("Model unloaded via tray.");
             }
             "cancel" => {
                 use crate::utils::cancel_current_operation;
@@ -453,7 +448,14 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
     // --list-devices: print registered compute devices (with indices) and exit.
     // Useful on multi-GPU machines to discover the index for --device-index.
     if args.list_devices {
-        let devices = crate::managers::transcription::describe_compute_devices();
+        let tm = app.state::<Arc<TranscriptionManager>>();
+        let devices = match crate::managers::transcription::describe_compute_devices(&tm) {
+            Ok(devices) => devices,
+            Err(e) => {
+                eprintln!("error: {}", e);
+                return 1;
+            }
+        };
         if devices.is_empty() {
             println!("No transcribe-cpp compute devices registered.");
         } else {
@@ -944,19 +946,17 @@ pub fn run(cli_args: CliArgs) {
                     TranscriptionManager::new(&app_handle, model_manager.clone())
                         .expect("Failed to initialize transcription manager"),
                 );
+                managers::transcription::report_compute_devices(&transcription_manager);
                 app_handle.manage(model_manager);
                 app_handle.manage(transcription_manager);
-                managers::transcription::init_transcribe_backend();
-                managers::transcription::report_compute_devices();
                 managers::transcription::apply_accelerator_settings(&app_handle);
 
                 let handle = app_handle.clone();
                 let args = cli_args.clone();
                 std::thread::spawn(move || {
                     let code = run_headless_guarded(|| run_headless_transcription(&handle, &args));
-                    // Drop the loaded engine before teardown: ggml-metal's global
-                    // device free asserts (SIGABRT) if a model's Metal resources
-                    // are still alive at C++ static-destructor time.
+                    // Drop the loaded engine before exit so its transcription
+                    // worker is told to shut down cleanly.
                     if let Some(tm) = handle.try_state::<Arc<TranscriptionManager>>() {
                         let _ = tm.unload_model();
                     }
@@ -1061,10 +1061,14 @@ pub fn run(cli_args: CliArgs) {
             // stays off the startup path. get_available_accelerators then enumerates
             // ORT execution providers and transcribe-cpp compute devices; without this
             // the cost is paid synchronously when the user first opens Advanced
-            // settings, freezing the UI. Result is cached in a OnceLock.
-            std::thread::spawn(|| {
-                crate::managers::transcription::report_compute_devices();
-                let _ = crate::managers::transcription::get_available_accelerators();
+            // settings, freezing the UI. The device list is kept by the
+            // transcription engine and refreshed by every worker it starts that may
+            // use the GPU (CPU-only workers can't see it).
+            let devices_app_handle = app_handle.clone();
+            std::thread::spawn(move || {
+                let tm = devices_app_handle.state::<Arc<TranscriptionManager>>();
+                crate::managers::transcription::report_compute_devices(&tm);
+                let _ = crate::managers::transcription::get_available_accelerators(&tm);
             });
 
             // Hide tray icon if --no-tray was passed
@@ -1143,7 +1147,10 @@ pub fn run(cli_args: CliArgs) {
             }
             show_main_window(app);
         }
-        // Teardown transcribe.cpp before exit
+        // No transcription teardown on exit: transcribe.cpp runs only in the
+        // worker process, which exits by itself as soon as this process's end
+        // of its stdin closes, even if it is hung. Waiting on an unload here
+        // could block quitting behind a hung model load.
         tauri::RunEvent::Exit => {
             // Never leave the user's system audio muted because they quit
             // mid-recording. No-ops unless our mute is currently active.
@@ -1156,9 +1163,6 @@ pub fn run(cli_args: CliArgs) {
             // exit — but bounded, so a wedged Spotify cannot hold the app
             // open. No-ops unless our pause is currently in effect.
             media_control::resume_blocking();
-            if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
-                let _ = tm.unload_model();
-            }
             // Settings are written with `store.set()` and persisted on a
             // 100 ms autosave debounce, so a change made just before quitting
             // is still in memory at this point. Push it to disk while we
@@ -1175,9 +1179,10 @@ pub fn run(cli_args: CliArgs) {
     //
     //     dyld start -> exit -> __cxa_finalize_ranges -> <handy> -> abort()
     //
-    // Nothing above needs those destructors: the model is unloaded in the Exit
-    // arm, settings are flushed there, and SQLite has committed per transaction.
-    // So end the process before the C runtime gets a turn.
+    // Nothing above needs those destructors: transcribe.cpp models live in the
+    // worker process, settings are flushed in the Exit arm, and SQLite has
+    // committed per transaction. So end the process before the C runtime gets
+    // a turn.
     //
     // Deliberately placed *after* `.run()` returns rather than inside the Exit
     // arm. `relaunch()` (UpdateChecker.tsx) spawns the replacement process and
