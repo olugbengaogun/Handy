@@ -1,8 +1,8 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
-use crate::managers::audio::AudioRecordingManager;
+use crate::audio_toolkit::VadPolicy;
+use crate::managers::audio::{recording_error_type, AudioRecordingManager};
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::StreamWorkKind;
@@ -549,6 +549,7 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
+<<<<<<< HEAD
         // apply_mute() above already silenced the output device the start
         // chime would play through (when mute_while_recording is on). Playing
         // it anyway would be inaudible at best; at worst it'd tempt a future
@@ -560,6 +561,9 @@ impl ShortcutAction for TranscribeAction {
         let skip_start_chime = settings.mute_while_recording;
 
         let mut recording_error: Option<String> = None;
+=======
+        let mut recording_error: Option<anyhow::Error> = None;
+>>>>>>> upstream/main
         let recording_start_time = Instant::now();
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(readiness) => {
@@ -663,18 +667,11 @@ impl ShortcutAction for TranscribeAction {
             utils::hide_recording_overlay(app);
             set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = if is_microphone_access_denied(&err) {
-                    "microphone_permission_denied"
-                } else if is_no_input_device_error(&err) {
-                    "no_input_device"
-                } else {
-                    "unknown"
-                };
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
-                        error_type: error_type.to_string(),
-                        detail: Some(err),
+                        error_type: recording_error_type(&err).to_string(),
+                        detail: Some(format!("{err:#}")),
                     },
                 );
             }
