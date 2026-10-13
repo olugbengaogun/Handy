@@ -13,9 +13,14 @@ pub mod utils;
 pub mod vad;
 
 pub use audio::{
+<<<<<<< HEAD
     is_microphone_access_denied, is_no_input_device_error, list_input_devices, list_output_devices,
     normalize_for_transcription, read_wav_samples, save_wav_file, verify_wav_file, AudioRecorder,
     CpalDeviceInfo, VadPolicy,
+=======
+    list_output_devices, read_wav_samples, save_wav_file, verify_wav_file, CaptureSink, CaptureVad,
+    VadPolicy,
+>>>>>>> upstream/main
 };
 pub use corrections::{apply_correction_pairs_tracked, apply_outside_protected, split_protected};
 pub use diff::{
